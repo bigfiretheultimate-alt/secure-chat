@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Encrypted Comm Hub (Dark)</title>
+    <title>Secure Advanced Chat Hub</title>
     <style>
         body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            font-family: system-ui, sans-serif; 
             background: #121214; 
             color: #e1e1e6;
             display: flex; 
@@ -17,81 +17,66 @@
         }
         .container { 
             background: #202024; 
-            padding: 30px; 
+            padding: 25px; 
             border-radius: 12px; 
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3); 
-            width: 360px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5); 
+            width: 550px; 
             box-sizing: border-box; 
             border: 1px solid #29292e;
         }
-        .hidden { display: none; }
-        h2, h3 { margin-top: 0; color: #ffffff; }
+        .hidden { display: none !important; }
+        .flex-layout { display: flex; gap: 20px; height: 320px; margin-top: 15px; }
+        .sidebar { width: 35%; border-right: 1px solid #29292e; padding-right: 10px; overflow-y: auto; }
+        .main-chat { width: 65%; display: flex; flex-direction: column; }
         
-        input { 
-            width: 100%; 
-            padding: 12px; 
-            margin: 10px 0; 
-            box-sizing: border-box; 
-            border: 1px solid #29292e; 
-            border-radius: 6px; 
-            font-size: 14px; 
-            background: #121214;
-            color: #e1e1e6;
-            outline: none;
+        input, select { 
+            width: 100%; padding: 10px; margin: 8px 0; 
+            box-sizing: border-box; border: 1px solid #29292e; 
+            border-radius: 6px; background: #121214; color: #e1e1e6; outline: none;
         }
-        input:focus {
-            border-color: #007bff;
-        }
-        
         button { 
-            width: 100%; 
-            padding: 12px; 
-            margin: 10px 0; 
-            box-sizing: border-box; 
-            background: #007bff; 
-            color: white; 
-            border: none; 
-            border-radius: 6px;
-            font-weight: bold; 
-            cursor: pointer; 
-            transition: background 0.2s; 
-            font-size: 14px;
+            width: 100%; padding: 10px; margin: 5px 0; 
+            background: #007bff; color: white; border: none; 
+            border-radius: 6px; font-weight: bold; cursor: pointer; 
         }
         button:hover { background: #0056b3; }
-        
-        #chat-box { 
-            height: 260px; 
-            border: 1px solid #29292e; 
-            overflow-y: auto; 
-            padding: 12px; 
-            margin-bottom: 10px; 
-            background: #121214; 
-            border-radius: 6px; 
-        }
-        #chat-box p { 
-            margin: 8px 0; 
-            line-height: 1.4; 
-            color: #c4c4cc; 
-        }
-        #login-error { color: #f75a68; font-size: 14px; margin: 5px 0 0 0; }
+        .alt-btn { background: #29292e; color: #a8a8b3; }
+        .alt-btn:hover { background: #323238; }
+
+        #chat-box { flex-grow: 1; border: 1px solid #29292e; overflow-y: auto; padding: 10px; background: #121214; border-radius: 6px; }
+        .status-tag { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 14px; }
+        .dot { width: 8px; height: 8px; background: #04d361; border-radius: 50%; }
+        #error-msg { color: #f75a68; font-size: 13px; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <div id="login-screen">
-        <h2>Secure Login</h2>
-        <input type="text" id="username" placeholder="Username (user1 or user2)">
+    <div id="auth-screen">
+        <h2 id="auth-title">Secure Login</h2>
+        <input type="text" id="username" placeholder="Username">
         <input type="password" id="password" placeholder="Password">
-        <button onclick="login()">Connect Devices</button>
-        <p id="login-error"></p>
+        <button id="primary-auth-btn" onclick="submitAuth()">Login</button>
+        <button class="alt-btn" id="toggle-auth-btn" onclick="toggleAuthMode()">Create an Account</button>
+        <p id="error-msg"></p>
     </div>
 
-    <div id="chat-screen" class="hidden">
-        <h3 id="welcome-text">Connected</h3>
-        <div id="chat-box"></div>
-        <input type="text" id="message-input" placeholder="Type an encrypted message...">
-        <button onclick="sendMessage()">Send Encrypted</button>
+    <div id="app-screen" class="hidden">
+        <h3 id="welcome-bar">Connected</h3>
+        
+        <div class="flex-layout">
+            <div class="sidebar">
+                <h4>Active Users</h4>
+                <div id="users-list"></div>
+            </div>
+            
+            <div class="main-chat">
+                <input type="text" id="target-user" placeholder="Target Username to message..." onchange="switchTargetChannel()">
+                <div id="chat-box"></div>
+                <input type="text" id="message-input" placeholder="Type private message...">
+                <button onclick="sendPrivateMsg()">Send Encrypted</button>
+            </div>
+        </div>
     </div>
 </div>
 
