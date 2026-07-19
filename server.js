@@ -7,7 +7,6 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-// Render or other cloud services assign a dynamic port via process.env.PORT
 const PORT = process.env.PORT || 3000;
 
 // Hardcoded database for credential validation
@@ -16,13 +15,14 @@ const USERS = {
     "user2": "securepass"
 };
 
+// Array to store the last 10 encrypted messages
+let MESSAGE_HISTORY = [];
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Authentication Endpoint
 app.post('/login', (req, res) => {
     const { username, password } = req.body;
-    
     if (USERS[username] && USERS[username] === password) {
         res.json({ success: true, username });
     } else {
@@ -30,11 +30,20 @@ app.post('/login', (req, res) => {
     }
 });
 
-// Socket.io WebSockets link the devices for instant routing
 io.on('connection', (socket) => {
-    // Listen for encrypted messages coming from a device
+    // Send previously saved messages to the newly connected user
+    socket.emit('load_history', MESSAGE_HISTORY);
+
     socket.on('chat_message', (data) => {
-        // Broadcast the encrypted payload instantly to all connected devices
+        // Add the new message to our history list
+        MESSAGE_HISTORY.push(data);
+
+        // Keep only the last 10 messages
+        if (MESSAGE_HISTORY.length > 10) {
+            MESSAGE_HISTORY.shift(); 
+        }
+
+        // Broadcast to everyone
         io.emit('chat_message', data);
     });
 });
