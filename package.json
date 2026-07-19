@@ -1,0 +1,14 @@
+{
+  "name": "secure-chat",
+  "version": "1.0.0",
+  "description": "Encrypted device-to-device communication hub",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "crypto-js": "^4.2.0",
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
