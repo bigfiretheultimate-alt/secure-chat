@@ -38,13 +38,14 @@ async function login() {
 }
 
 function initSocket() {
-    socket = io();
+    socket = io(window.location.origin, {
+        transports: ['websocket', 'polling']
+    });
 
-    socket.on('chat_message', (data) => {
+    // Helper function to handle decrypting and displaying a message
+    function displayMessage(data) {
         const chatBox = document.getElementById('chat-box');
-        
         try {
-            // Decrypt the payload package using the shared cryptographic key
             const bytes = CryptoJS.AES.decrypt(data.text, SHARED_SECRET_KEY);
             const decryptedText = bytes.toString(CryptoJS.enc.Utf8);
 
@@ -52,11 +53,25 @@ function initSocket() {
                 const msgElement = document.createElement('p');
                 msgElement.innerHTML = `<strong>${data.user}:</strong> ${decryptedText}`;
                 chatBox.appendChild(msgElement);
-                chatBox.scrollTop = chatBox.scrollHeight; // Keep view focused on newest text
+                chatBox.scrollTop = chatBox.scrollHeight;
             }
         } catch (e) {
-            console.error("Decryption pipeline error: Payload corrupted or invalid key setup.", e);
+            console.error("Decryption failed.", e);
         }
+    }
+
+    // Listen for the server sending the past 10 messages upon logging in
+    socket.on('load_history', (history) => {
+        const chatBox = document.getElementById('chat-box');
+        chatBox.innerHTML = ""; // Clear out chatbox to prevent duplicates
+        history.forEach(msg => {
+            displayMessage(msg);
+        });
+    });
+
+    // Listen for single incoming live messages
+    socket.on('chat_message', (data) => {
+        displayMessage(data);
     });
 }
 
