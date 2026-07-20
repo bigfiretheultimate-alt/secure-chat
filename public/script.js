@@ -3,12 +3,12 @@ let currentUser = "";
 let currentTarget = "";
 let isRegisterMode = false;
 const SHARED_SECRET_KEY = "my-really-really-really-secret-code";
-
 let peerConnection;
 let localStream;
 let incomingOffer = null;
 const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
+let screenStream = null;
+let isScreenSharing = false;
 // Restore session on page load
 window.addEventListener('DOMContentLoaded', () => {
     const savedUser = sessionStorage.getItem('chat_username');
@@ -264,8 +264,14 @@ function setupPeerConnection() {
     };
 
     peerConnection.ontrack = (event) => {
-        const remoteAudio = document.getElementById('remote-audio');
-        remoteAudio.srcObject = event.streams[0];
+        if (event.track.kind === 'audio') {
+            const remoteAudio = document.getElementById('remote-audio');
+            remoteAudio.srcObject = event.streams[0];
+        } else if (event.track.kind === 'video') {
+            const remoteVideo = document.getElementById('remote-video');
+            remoteVideo.srcObject = event.streams[0];
+            remoteVideo.classList.remove('hidden');
+        }
     };
 }
 
@@ -285,4 +291,88 @@ function cleanupCall() {
         localStream.getTracks().forEach(track => track.stop());
     }
     document.getElementById('call-banner').classList.add('hidden');
+}
+
+async function toggleScreenShare() {
+    if (!peerConnection) {
+        alert("You must be in an active call to share your screen!");
+        return;
+    }
+
+    if (!isScreenSharing) {
+        try {
+            // Capture the screen/window stream from browser
+            screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            const screenTrack = screenStream.getVideoTracks()[0];
+
+            // Replace or add video track on the WebRTC peer connection
+            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) {
+                sender.replaceTrack(screenTrack);
+            } else {
+                peerConnection.addTrack(screenTrack, screenStream);
+            }
+
+            // Handle when user stops sharing via browser UI floating bar
+            screenTrack.onended = () => {
+                stopScreenShare();
+            };
+
+            document.getElementById('screen-share-btn').innerText = "🛑 Stop Sharing";
+            isScreenSharing = true;
+
+        } catch (err) {
+            console.error("Screen sharing canceled or failed:", err);
+        }
+    } else {
+        stopScreenShare();
+    }
+}
+
+function stopScreenShare() {
+    if (screenStream) {
+        screenStream.getTracks().forEach(track => track.stop());
+        screenStream = null;
+    }
+
+    // Remove video sender if present
+    const sender = peerConnection ? peerConnection.getSenders().find(s => s.track && s.track.kind === 'video') : null;
+    if (sender) {
+        peerConnection.removeTrack(sender);
+    }
+
+    document.getElementById('screen-share-btn').innerText = "🖥️ Share Screen";
+    isScreenSharing = false;
+}
+
+// 4. Update selectTargetUser to show the screen share button
+function selectTargetUser(targetUsername) {
+    currentTarget = targetUsername;
+    
+    document.getElementById('chat-header').innerText = `Chatting with: ${currentTarget}`;
+    document.getElementById('message-input').disabled = false;
+    document.getElementById('send-btn').disabled = false;
+    document.getElementById('start-call-btn').classList.remove('hidden');
+    document.getElementById('screen-share-btn').classList.remove('hidden'); // Show button
+
+    if (window.innerWidth <= 768) {
+        showMobileTab('chat');
+    }
+
+    if (socket) {
+        socket.emit('get_private_history', currentTarget);
+    }
+}
+
+function cleanupCall() {
+    stopScreenShare();
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
+    if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+    }
+    document.getElementById('call-banner').classList.add('hidden');
+    document.getElementById('remote-video').classList.add('hidden');
 }

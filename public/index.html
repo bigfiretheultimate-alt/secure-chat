@@ -223,9 +223,13 @@
             <div id="main-chat" class="main-chat">
                 <div class="chat-header-bar">
                     <span id="chat-header">Select a contact</span>
-                    <button id="start-call-btn" class="call-btn hidden" style="width:auto; padding: 6px 12px;" onclick="startCall()">📞 Call</button>
+                    <div style="display: flex; gap: 5px;">
+                        <button id="start-call-btn" class="call-btn hidden" style="width:auto; padding: 6px 12px;" onclick="startCall()">📞 Call</button>
+                        <button id="screen-share-btn" class="call-btn hidden" style="width:auto; padding: 6px 12px; background: #9146FF;" onclick="toggleScreenShare()">🖥️ Share Screen</button>
+                    </div>
                 </div>
                 <div id="chat-box"></div>
+                <video id="remote-video" autoplay playsinline class="hidden" style="width: 100%; max-height: 250px; background: #000; border-radius: 6px; margin-bottom: 10px;"></video>
                 <div class="input-row">
                     <textarea id="message-input" placeholder="Type private message... (Press Enter to send, Shift+Enter for new line)" disabled></textarea>
                     <button id="send-btn" onclick="sendPrivateMsg()" disabled>Send</button>
