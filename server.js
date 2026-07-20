@@ -2,36 +2,76 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-
+const mongoose = require('mongoose');
+const CryptoJS = require('crypto-js'); // Add at top of server.js
+const SHARED_SECRET_KEY = "my-super-secret-vault-key";
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-
+// Paste your key inside the quotes:
+const GEMINI_API_KEY = "AQ.Ab8RN6LEYwnWi959nnUhfX_lcDUDViFbRtyiLH6-KfSBcyJzA";
 const PORT = process.env.PORT || 3000;
 
-const REGISTERED_USERS = {}; 
-const ACTIVE_USERS = {}; // username -> socket.id
-const MESSAGE_HISTORY = {}; 
+// PASTE YOUR CONNECTION STRING HERE (Wrap in quotes and replace <db_password>):
+const MONGO_URI = "mongodb+srv://admin:<db_password>@cluster0.zbclxvl.mongodb.net/?appName=Cluster0";
+
+// Connect to MongoDB Database
+mongoose.connect(MONGO_URI)
+    .then(() => console.log('Connected to MongoDB Atlas successfully!'))
+    .catch(err => console.error('MongoDB connection error:', err));
+
+// Define Database Schemas
+const userSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    password: { type: String, required: true }
+});
+
+const messageSchema = new mongoose.Schema({
+    room: { type: String, required: true },
+    user: { type: String, required: true },
+    text: { type: String, required: true },
+    timestamp: { type: Date, default: Date.now }
+});
+
+const User = mongoose.model('User', userSchema);
+const Message = mongoose.model('Message', messageSchema);
+
+const ACTIVE_USERS = {}; // Tracks live socket connections
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.post('/register', (req, res) => {
+// Account Creation Endpoint
+app.post('/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ success: false, message: "Missing fields" });
-    if (REGISTERED_USERS[username]) return res.status(400).json({ success: false, message: "Username taken" });
-    
-    REGISTERED_USERS[username] = password;
-    broadcastUserDirectory();
-    res.json({ success: true });
+
+    try {
+        const existingUser = await User.findOne({ username });
+        if (existingUser) return res.status(400).json({ success: false, message: "Username taken" });
+
+        const newUser = new User({ username, password });
+        await newUser.save();
+
+        await broadcastUserDirectory();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: "Server database error" });
+    }
 });
 
-app.post('/login', (req, res) => {
+// Login Endpoint
+app.post('/login', async (req, res) => {
     const { username, password } = req.body;
-    if (REGISTERED_USERS[username] && REGISTERED_USERS[username] === password) {
-        res.json({ success: true, username });
-    } else {
-        res.status(401).json({ success: false, message: "Invalid credentials" });
+    try {
+        const user = await User.findOne({ username, password });
+        if (user) {
+            res.json({ success: true, username: user.username });
+        } else {
+            res.status(401).json({ success: false, message: "Invalid credentials" });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, message: "Server database error" });
     }
 });
 
@@ -39,47 +79,84 @@ function getRoomId(user1, user2) {
     return [user1, user2].sort().join('-');
 }
 
-function broadcastUserDirectory() {
-    const directory = Object.keys(REGISTERED_USERS).map(username => ({
-        username: username,
-        isOnline: Boolean(ACTIVE_USERS[username])
-    }));
-    io.emit('update_user_directory', directory);
+async function broadcastUserDirectory() {
+    try {
+        const allUsers = await User.find({}, 'username');
+        const directory = allUsers.map(u => ({
+            username: u.username,
+            isOnline: Boolean(ACTIVE_USERS[u.username])
+        }));
+        io.emit('update_user_directory', directory);
+    } catch (err) {
+        console.error("Error broadcasting user directory:", err);
+    }
 }
 
 io.on('connection', (socket) => {
     let authenticatedUser = null;
 
-    socket.on('register_active_user', (username) => {
+    socket.on('register_active_user', async (username) => {
         authenticatedUser = username;
         ACTIVE_USERS[username] = socket.id;
-        broadcastUserDirectory();
+        await broadcastUserDirectory();
     });
 
-    socket.on('get_private_history', (targetUser) => {
+    socket.on('get_private_history', async (targetUser) => {
         if (!authenticatedUser) return;
         const room = getRoomId(authenticatedUser, targetUser);
-        socket.emit('load_history', MESSAGE_HISTORY[room] || []);
-    });
-
-    socket.on('private_message', (data) => {
-        if (!authenticatedUser) return;
-        const { to, text } = data;
-        const room = getRoomId(authenticatedUser, to);
-        const newMsg = { user: authenticatedUser, text };
-
-        if (!MESSAGE_HISTORY[room]) MESSAGE_HISTORY[room] = [];
-        MESSAGE_HISTORY[room].push(newMsg);
-        if (MESSAGE_HISTORY[room].length > 10) MESSAGE_HISTORY[room].shift();
-
-        const recipientSocketId = ACTIVE_USERS[to];
-        if (recipientSocketId) {
-            io.to(recipientSocketId).emit('chat_message', { ...newMsg, room });
+        try {
+            const history = await Message.find({ room }).sort({ timestamp: -1 }).limit(10);
+            socket.emit('load_history', history.reverse());
+        } catch (err) {
+            console.error("Error loading chat history:", err);
         }
-        socket.emit('chat_message', { ...newMsg, room });
     });
 
-    // --- WebRTC Voice Call Signaling ---
+    socket.on('private_message', async (data) => {
+        if (!authenticatedUser) return;
+        const { to, text } = data; // 'text' is AES-encrypted from frontend
+        const room = getRoomId(authenticatedUser, to);
+
+        try {
+            // Save & send human message
+            const savedMsg = new Message({ room, user: authenticatedUser, text });
+            await savedMsg.save();
+
+            const recipientSocketId = ACTIVE_USERS[to];
+            if (recipientSocketId) {
+                io.to(recipientSocketId).emit('chat_message', { room, user: authenticatedUser, text });
+            }
+            socket.emit('chat_message', { room, user: authenticatedUser, text });
+
+            // --- Gemini AI Bot Handling ---
+            if (to === "Gemini AI") {
+                // 1. Decrypt user's text for Gemini
+                const bytes = CryptoJS.AES.decrypt(text, SHARED_SECRET_KEY);
+                const plainPrompt = bytes.toString(CryptoJS.enc.Utf8);
+
+                // 2. Fetch answer from Gemini
+                const response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: plainPrompt,
+                });
+                const plainReply = response.text || "Sorry, I couldn't process that.";
+
+                // 3. Encrypt Gemini's response so frontend can decrypt it
+                const encryptedReply = CryptoJS.AES.encrypt(plainReply, SHARED_SECRET_KEY).toString();
+
+                // 4. Save & emit encrypted reply back to user
+                const aiMsgData = { room, user: "Gemini AI", text: encryptedReply };
+                const savedAiMsg = new Message(aiMsgData);
+                await savedAiMsg.save();
+
+                socket.emit('chat_message', aiMsgData);
+            }
+        } catch (err) {
+            console.error("Error handling message or Gemini API:", err);
+        }
+    });
+
+    // WebRTC Voice Call Signaling
     socket.on('call_user', ({ to, offer }) => {
         const recipientSocketId = ACTIVE_USERS[to];
         if (recipientSocketId) {
@@ -108,10 +185,10 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
         if (authenticatedUser) {
             delete ACTIVE_USERS[authenticatedUser];
-            broadcastUserDirectory();
+            await broadcastUserDirectory();
         }
     });
 });
