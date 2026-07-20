@@ -13,7 +13,7 @@ const io = new Server(server);
 const PORT = process.env.PORT || 3000;
 
 // 1. Connection strings (replace with your actual password and key)
-const MONGO_URI = "mongodb+srv://admin:firewaterchat@cluster0.zbclxv1.mongodb.net/chat_db?retryWrites=true&w=majority&appName=Cluster0";
+const MONGO_URI = "mongodb+srv://admin:firewaterchat@cluster0.zbclxvl.mongodb.net/?appName=Cluster0";
 const GEMINI_API_KEY = "AIzaSyAQ.Ab8RN6LEYwnWi959nnnUhfX_lcDUDViFbRtyiLH6-KfSBcyJzA";
 
 // 2. Initialize Gemini
