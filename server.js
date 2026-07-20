@@ -9,7 +9,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 const PORT = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGO_URI;
+const MONGO_URI = "mongodb+srv://admin:firewaterchat@cluster0.zbclxvl.mongodb.net/?appName=Cluster0";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 // Safe initialization for CommonJS require
 const GoogleGenAIClass = genai.GoogleGenAI || genai;
