@@ -158,6 +158,23 @@
             margin-bottom: 3px;
             opacity: 0.8;
         }
+        /* Ensure video expands to fill full screen when container enters fullscreen mode */
+        #video-container:fullscreen #remote-video,
+        #video-container:-webkit-full-screen #remote-video {
+            width: 100% !important;
+            height: 100% !important;
+            max-height: 100vh !important;
+            object-fit: contain; /* Keeps original video aspect ratio without stretching */
+        }
+
+        /* Ensure the container background stays black in full screen */
+        #video-container:fullscreen,
+        #video-container:-webkit-full-screen {
+            background-color: #000000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
     </style>
 </head>
 <body>
