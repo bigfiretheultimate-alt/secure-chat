@@ -13,7 +13,7 @@ const GEMINI_API_KEY = "AQ.Ab8RN6LEYwnWi959nnUhfX_lcDUDViFbRtyiLH6-KfSBcyJzA";
 const PORT = process.env.PORT || 3000;
 
 // PASTE YOUR CONNECTION STRING HERE (Wrap in quotes and replace <db_password>):
-const MONGO_URI = "mongodb+srv://admin:<db_password>@cluster0.zbclxvl.mongodb.net/?appName=Cluster0";
+const MONGO_URI = "mongodb+srv://admin:MyChatPass123@cluster0.zbclxvl.mongodb.net/?appName=Cluster0";
 
 // Connect to MongoDB Database
 mongoose.connect(MONGO_URI)
