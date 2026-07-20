@@ -27,6 +27,9 @@ app.post('/register', (req, res) => {
         return res.status(400).json({ success: false, message: "Username taken" });
     }
     REGISTERED_USERS[username] = password;
+    
+    // Broadcast newly updated user directory to everyone
+    broadcastUserDirectory();
     res.json({ success: true });
 });
 
@@ -45,6 +48,15 @@ function getRoomId(user1, user2) {
     return [user1, user2].sort().join('-');
 }
 
+// Helper to broadcast full directory (online + offline)
+function broadcastUserDirectory() {
+    const directory = Object.keys(REGISTERED_USERS).map(username => ({
+        username: username,
+        isOnline: Boolean(ACTIVE_USERS[username])
+    }));
+    io.emit('update_user_directory', directory);
+}
+
 io.on('connection', (socket) => {
     let authenticatedUser = null;
 
@@ -53,8 +65,8 @@ io.on('connection', (socket) => {
         authenticatedUser = username;
         ACTIVE_USERS[username] = socket.id;
         
-        // Broadcast the updated online list to everyone
-        io.emit('update_status_list', Object.keys(ACTIVE_USERS));
+        // Send full user directory to all connected clients
+        broadcastUserDirectory();
     });
 
     // Load private history between two specific users
@@ -79,17 +91,17 @@ io.on('connection', (socket) => {
         // Deliver to recipient if online
         const recipientSocketId = ACTIVE_USERS[to];
         if (recipientSocketId) {
-            io.to(recipientSocketId).emit('chat_message', newMsg);
+            io.to(recipientSocketId).emit('chat_message', { ...newMsg, room });
         }
         // Deliver back to sender's UI
-        socket.emit('chat_message', newMsg);
+        socket.emit('chat_message', { ...newMsg, room });
     });
 
-    // Handle sudden disconnect cleanups
+    // Handle disconnect cleanups
     socket.on('disconnect', () => {
         if (authenticatedUser) {
             delete ACTIVE_USERS[authenticatedUser];
-            io.emit('update_status_list', Object.keys(ACTIVE_USERS));
+            broadcastUserDirectory();
         }
     });
 });

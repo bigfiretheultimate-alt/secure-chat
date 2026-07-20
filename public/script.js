@@ -73,17 +73,31 @@ function initSocket() {
         } catch (e) { console.error("Decryption error", e); }
     }
 
-    // Handles live status tracking list rendering
-    socket.on('update_status_list', (onlineUsers) => {
+    // Render directory showing both online & offline users
+    socket.on('update_user_directory', (userList) => {
         const listDiv = document.getElementById('users-list');
         listDiv.innerHTML = "";
-        onlineUsers.forEach(user => {
-            if(user !== currentUser) {
-                const item = document.createElement('div');
-                item.className = "status-tag";
-                item.innerHTML = `<span class="dot"></span> <span>${user}</span>`;
-                listDiv.appendChild(item);
-            }
+
+        userList.forEach(account => {
+            if (account.username === currentUser) return; // Hide self
+
+            const card = document.createElement('div');
+            const isActive = account.username === currentTarget;
+            card.className = `user-card ${isActive ? 'active-target' : ''}`;
+            
+            const dotClass = account.isOnline ? 'dot-online' : 'dot-offline';
+            const statusText = account.isOnline ? 'Online' : 'Offline';
+
+            card.innerHTML = `
+                <div class="user-info">
+                    <span class="dot ${dotClass}"></span>
+                    <span>${account.username}</span>
+                </div>
+                <span class="status-label">${statusText}</span>
+            `;
+
+            card.onclick = () => selectTargetUser(account.username);
+            listDiv.appendChild(card);
         });
     });
 
@@ -94,16 +108,32 @@ function initSocket() {
     });
 
     socket.on('chat_message', (data) => {
-        // Only render immediately if it matches the current conversational path
-        if (data.user === currentTarget || data.user === currentUser) {
+        const expectedRoom = [currentUser, currentTarget].sort().join('-');
+        if (data.room === expectedRoom) {
             displayMessage(data);
         }
     });
 }
 
-function switchTargetChannel() {
-    currentTarget = document.getElementById('target-user').value.trim();
-    if (currentTarget && socket) {
+function selectTargetUser(targetUsername) {
+    currentTarget = targetUsername;
+    
+    // Update Chat Header & Enable Controls
+    document.getElementById('chat-header').innerText = `Chatting with: ${currentTarget}`;
+    document.getElementById('message-input').disabled = false;
+    document.getElementById('send-btn').disabled = false;
+
+    // Trigger UI selection styling update
+    document.querySelectorAll('.user-card').forEach(card => {
+        if(card.innerText.includes(targetUsername)) {
+            card.classList.add('active-target');
+        } else {
+            card.classList.remove('active-target');
+        }
+    });
+
+    // Request chat history with selected user
+    if (socket) {
         socket.emit('get_private_history', currentTarget);
     }
 }
@@ -111,12 +141,8 @@ function switchTargetChannel() {
 function sendPrivateMsg() {
     const msgInput = document.getElementById('message-input');
     const text = msgInput.value.trim();
-    currentTarget = document.getElementById('target-user').value.trim();
 
-    if (!currentTarget) {
-        alert("Please specify a target person first!");
-        return;
-    }
+    if (!currentTarget) return;
 
     if (text && socket) {
         const encryptedText = CryptoJS.AES.encrypt(text, SHARED_SECRET_KEY).toString();
