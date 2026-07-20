@@ -1,390 +1,200 @@
-let socket;
-let currentUser = "";
-let currentTarget = "";
-let isRegisterMode = false;
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const path = require('path');
+const mongoose = require('mongoose');
+const genai = require('@google/genai');
+const CryptoJS = require('crypto-js');
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+const PORT = process.env.PORT || 3000;
+const MONGO_URI = "mongodb+srv://admin:firewaterchat@cluster0.zbclxvl.mongodb.net/?appName=Cluster0";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// Safe initialization for CommonJS require
+const GoogleGenAIClass = genai.GoogleGenAI || genai;
+const ai = new GoogleGenAIClass({ apiKey: GEMINI_API_KEY });
+// Make sure this matches the secret key used in your frontend script.js!
 const SHARED_SECRET_KEY = "my-really-really-really-secret-code";
+// Connect to MongoDB Database
+mongoose.connect(MONGO_URI)
+    .then(() => console.log('Connected to MongoDB Atlas successfully!'))
+    .catch(err => console.error('MongoDB connection error:', err));
 
-let peerConnection;
-let localStream;
-let screenStream = null;
-let incomingOffer = null;
-let isMuted = false;
-let isScreenSharing = false;
+// Define Database Schemas
+const userSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    password: { type: String, required: true }
+});
 
-const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const messageSchema = new mongoose.Schema({
+    room: { type: String, required: true },
+    user: { type: String, required: true },
+    text: { type: String, required: true },
+    timestamp: { type: Date, default: Date.now }
+});
 
-// Restore session on page load
-window.addEventListener('DOMContentLoaded', () => {
-    const savedUser = sessionStorage.getItem('chat_username');
-    if (savedUser) {
-        currentUser = savedUser;
-        document.getElementById('auth-screen').classList.add('hidden');
-        document.getElementById('app-screen').classList.remove('hidden');
-        document.getElementById('welcome-bar').innerText = `Logged in as: ${currentUser}`;
-        initSocket();
+const User = mongoose.model('User', userSchema);
+const Message = mongoose.model('Message', messageSchema);
+
+const ACTIVE_USERS = {}; // Tracks live socket connections
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Account Creation Endpoint
+app.post('/register', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ success: false, message: "Missing fields" });
+
+    try {
+        const existingUser = await User.findOne({ username });
+        if (existingUser) return res.status(400).json({ success: false, message: "Username taken" });
+
+        const newUser = new User({ username, password });
+        await newUser.save();
+
+        await broadcastUserDirectory();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: "Server database error" });
     }
+});
 
-    const msgInput = document.getElementById('message-input');
-    msgInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendPrivateMsg();
+// Login Endpoint
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+    try {
+        const user = await User.findOne({ username, password });
+        if (user) {
+            res.json({ success: true, username: user.username });
+        } else {
+            res.status(401).json({ success: false, message: "Invalid credentials" });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, message: "Server database error" });
+    }
+});
+
+function getRoomId(user1, user2) {
+    return [user1, user2].sort().join('-');
+}
+
+async function broadcastUserDirectory() {
+    try {
+        const allUsers = await User.find({}, 'username');
+        const directory = allUsers.map(u => ({
+            username: u.username,
+            isOnline: Boolean(ACTIVE_USERS[u.username])
+        }));
+        directory.unshift({ username: "Gemini AI", isOnline: true });
+        io.emit('update_user_directory', directory);
+    } catch (err) {
+        console.error("Error broadcasting user directory:", err);
+    }
+}
+
+io.on('connection', (socket) => {
+    let authenticatedUser = null;
+
+    socket.on('register_active_user', async (username) => {
+        authenticatedUser = username;
+        ACTIVE_USERS[username] = socket.id;
+        await broadcastUserDirectory();
+    });
+
+    socket.on('get_private_history', async (targetUser) => {
+        if (!authenticatedUser) return;
+        const room = getRoomId(authenticatedUser, targetUser);
+        try {
+            const history = await Message.find({ room }).sort({ timestamp: -1 }).limit(10);
+            socket.emit('load_history', history.reverse());
+        } catch (err) {
+            console.error("Error loading chat history:", err);
+        }
+    });
+
+    socket.on('private_message', async (data) => {
+        if (!authenticatedUser) return;
+        const { to, text } = data; // 'text' is AES-encrypted from frontend
+        const room = getRoomId(authenticatedUser, to);
+
+        try {
+            // Save & send human message
+            const savedMsg = new Message({ room, user: authenticatedUser, text });
+            await savedMsg.save();
+
+            const recipientSocketId = ACTIVE_USERS[to];
+            if (recipientSocketId) {
+                io.to(recipientSocketId).emit('chat_message', { room, user: authenticatedUser, text });
+            }
+            socket.emit('chat_message', { room, user: authenticatedUser, text });
+
+            // --- Gemini AI Bot Handling ---
+            if (to === "Gemini AI") {
+                // 1. Decrypt user's text for Gemini
+                const bytes = CryptoJS.AES.decrypt(text, SHARED_SECRET_KEY);
+                const plainPrompt = bytes.toString(CryptoJS.enc.Utf8);
+
+                // 2. Fetch answer from Gemini
+                const response = await ai.models.generateContent({
+                    model: 'gemini-flash-latest',
+                    contents: plainPrompt,
+                });
+                const plainReply = response.text || "Sorry, I couldn't process that.";
+
+                // 3. Encrypt Gemini's response so frontend can decrypt it
+                const encryptedReply = CryptoJS.AES.encrypt(plainReply, SHARED_SECRET_KEY).toString();
+
+                // 4. Save & emit encrypted reply back to user
+                const aiMsgData = { room, user: "Gemini AI", text: encryptedReply };
+                const savedAiMsg = new Message(aiMsgData);
+                await savedAiMsg.save();
+
+                socket.emit('chat_message', aiMsgData);
+            }
+        } catch (err) {
+            console.error("Error handling message or Gemini API:", err);
+        }
+    });
+
+    // WebRTC Voice Call Signaling
+    socket.on('call_user', ({ to, offer }) => {
+        const recipientSocketId = ACTIVE_USERS[to];
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('incoming_call', { from: authenticatedUser, offer });
+        }
+    });
+
+    socket.on('answer_call', ({ to, answer }) => {
+        const recipientSocketId = ACTIVE_USERS[to];
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('call_answered', { from: authenticatedUser, answer });
+        }
+    });
+
+    socket.on('ice_candidate', ({ to, candidate }) => {
+        const recipientSocketId = ACTIVE_USERS[to];
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('ice_candidate', { from: authenticatedUser, candidate });
+        }
+    });
+
+    socket.on('end_call', ({ to }) => {
+        const recipientSocketId = ACTIVE_USERS[to];
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('call_ended');
+        }
+    });
+
+    socket.on('disconnect', async () => {
+        if (authenticatedUser) {
+            delete ACTIVE_USERS[authenticatedUser];
+            await broadcastUserDirectory();
         }
     });
 });
 
-function logout() {
-    sessionStorage.removeItem('chat_username');
-    location.reload();
-}
-
-function toggleAuthMode() {
-    isRegisterMode = !isRegisterMode;
-    document.getElementById('auth-title').innerText = isRegisterMode ? "Create Account" : "Secure Login";
-    document.getElementById('primary-auth-btn').innerText = isRegisterMode ? "Register Account" : "Login";
-    document.getElementById('toggle-auth-btn').innerText = isRegisterMode ? "Back to Login" : "Create an Account";
-    document.getElementById('error-msg').innerText = "";
-}
-
-async function submitAuth() {
-    const usernameInput = document.getElementById('username').value.trim();
-    const passwordInput = document.getElementById('password').value.trim();
-    const errorText = document.getElementById('error-msg');
-
-    if(!usernameInput || !passwordInput) {
-        errorText.innerText = "Please complete all fields.";
-        return;
-    }
-
-    const endpoint = isRegisterMode ? '/register' : '/login';
-
-    try {
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: usernameInput, password: passwordInput })
-        });
-        const data = await response.json();
-
-        if (data.success) {
-            if (isRegisterMode) {
-                isRegisterMode = false;
-                toggleAuthMode();
-                errorText.style.color = "#04d361";
-                errorText.innerText = "Account created! Please log in.";
-            } else {
-                currentUser = data.username;
-                sessionStorage.setItem('chat_username', currentUser);
-                document.getElementById('auth-screen').classList.add('hidden');
-                document.getElementById('app-screen').classList.remove('hidden');
-                document.getElementById('welcome-bar').innerText = `Logged in as: ${currentUser}`;
-                initSocket();
-            }
-        } else {
-            errorText.style.color = "#f75a68";
-            errorText.innerText = data.message;
-        }
-    } catch(err) {
-        errorText.innerText = "Connection error.";
-    }
-}
-
-function initSocket() {
-    socket = io(window.location.origin, { transports: ['websocket', 'polling'] });
-    socket.emit('register_active_user', currentUser);
-
-    function displayMessage(data) {
-        const chatBox = document.getElementById('chat-box');
-        try {
-            const bytes = CryptoJS.AES.decrypt(data.text, SHARED_SECRET_KEY);
-            const decryptedText = bytes.toString(CryptoJS.enc.Utf8);
-            if (decryptedText) {
-                const msgElement = document.createElement('div');
-                const isSentByMe = data.user === currentUser;
-
-                msgElement.className = `message-bubble ${isSentByMe ? 'sent' : 'received'}`;
-                
-                const formattedText = decryptedText.replace(/\n/g, '<br>');
-                msgElement.innerHTML = `
-                    <div class="message-author">${data.user}</div>
-                    <div class="message-text">${formattedText}</div>
-                `;
-
-                chatBox.appendChild(msgElement);
-                chatBox.scrollTop = chatBox.scrollHeight;
-            }
-        } catch (e) { console.error("Decryption error", e); }
-    }
-
-    socket.on('update_user_directory', (userList) => {
-        const listDiv = document.getElementById('users-list');
-        listDiv.innerHTML = "";
-
-        userList.forEach(account => {
-            if (account.username === currentUser) return;
-
-            const card = document.createElement('div');
-            const isActive = account.username === currentTarget;
-            card.className = `user-card ${isActive ? 'active-target' : ''}`;
-            
-            const dotClass = account.isOnline ? 'dot-online' : 'dot-offline';
-            const statusText = account.isOnline ? 'Online' : 'Offline';
-
-            card.innerHTML = `
-                <div>
-                    <span class="dot ${dotClass}"></span>
-                    <span>${account.username}</span>
-                </div>
-                <span style="font-size: 11px; opacity:0.7;">${statusText}</span>
-            `;
-
-            card.onclick = () => selectTargetUser(account.username);
-            listDiv.appendChild(card);
-        });
-    });
-
-    socket.on('load_history', (history) => {
-        const chatBox = document.getElementById('chat-box');
-        chatBox.innerHTML = ""; 
-        history.forEach(msg => displayMessage(msg));
-    });
-
-    socket.on('chat_message', (data) => {
-        const expectedRoom = [currentUser, currentTarget].sort().join('-');
-        if (data.room === expectedRoom) {
-            displayMessage(data);
-        }
-    });
-
-    socket.on('incoming_call', async ({ from, offer }) => {
-        // If peer connection exists, this is a renegotiation (e.g. Screen Share added mid-call)
-        if (peerConnection) {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            socket.emit('answer_call', { to: from, answer });
-        } else {
-            incomingOffer = { from, offer };
-            document.getElementById('call-banner').classList.remove('hidden');
-            document.getElementById('call-status-text').innerText = `Incoming Call from ${from}...`;
-            document.getElementById('accept-call-btn').classList.remove('hidden');
-        }
-    });
-
-    socket.on('call_answered', async ({ answer }) => {
-        if (peerConnection) {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-            document.getElementById('call-status-text').innerText = `Call Connected`;
-        }
-    });
-
-    socket.on('ice_candidate', async ({ candidate }) => {
-        if (peerConnection && candidate) {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        }
-    });
-
-    socket.on('call_ended', () => {
-        cleanupCall();
-    });
-}
-
-function showMobileTab(tab) {
-    const sidebar = document.getElementById('sidebar');
-    const mainChat = document.getElementById('main-chat');
-    
-    if (tab === 'contacts') {
-        sidebar.classList.remove('mobile-hidden');
-        mainChat.classList.add('mobile-hidden');
-    } else {
-        sidebar.classList.add('mobile-hidden');
-        mainChat.classList.remove('mobile-hidden');
-    }
-}
-
-function selectTargetUser(targetUsername) {
-    currentTarget = targetUsername;
-    
-    document.getElementById('chat-header').innerText = `Chatting with: ${currentTarget}`;
-    document.getElementById('message-input').disabled = false;
-    document.getElementById('send-btn').disabled = false;
-    document.getElementById('start-call-btn').classList.remove('hidden');
-    document.getElementById('mute-btn').classList.remove('hidden');
-    document.getElementById('screen-share-btn').classList.remove('hidden');
-
-    if (window.innerWidth <= 768) {
-        showMobileTab('chat');
-    }
-
-    if (socket) {
-        socket.emit('get_private_history', currentTarget);
-    }
-}
-
-function sendPrivateMsg() {
-    const msgInput = document.getElementById('message-input');
-    const text = msgInput.value.trim();
-
-    if (!currentTarget) return;
-
-    if (text && socket) {
-        const encryptedText = CryptoJS.AES.encrypt(text, SHARED_SECRET_KEY).toString();
-        socket.emit('private_message', { to: currentTarget, text: encryptedText });
-        msgInput.value = "";
-    }
-}
-
-/* ==========================================================================
-   VOICE, MUTE, & SCREEN SHARE LOGIC
-   ========================================================================== */
-
-function toggleMute() {
-    if (!localStream) {
-        alert("You must be in an active call to mute your microphone!");
-        return;
-    }
-
-    const audioTrack = localStream.getAudioTracks()[0];
-    if (audioTrack) {
-        isMuted = !isMuted;
-        audioTrack.enabled = !isMuted;
-        
-        const muteBtn = document.getElementById('mute-btn');
-        muteBtn.innerText = isMuted ? "🔇 Unmute" : "🎙️ Mute";
-        muteBtn.style.background = isMuted ? "#f75a68" : "#29292e";
-    }
-}
-
-async function startCall() {
-    if (!currentTarget) return;
-    setupPeerConnection();
-
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-
-    socket.emit('call_user', { to: currentTarget, offer });
-    document.getElementById('call-banner').classList.remove('hidden');
-    document.getElementById('call-status-text').innerText = `Calling ${currentTarget}...`;
-    document.getElementById('accept-call-btn').classList.add('hidden');
-}
-
-async function acceptCall() {
-    if (!incomingOffer) return;
-    currentTarget = incomingOffer.from;
-    setupPeerConnection();
-
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingOffer.offer));
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-
-    socket.emit('answer_call', { to: currentTarget, answer });
-    document.getElementById('call-status-text').innerText = `In Call with ${currentTarget}`;
-    document.getElementById('accept-call-btn').classList.add('hidden');
-}
-
-function setupPeerConnection() {
-    peerConnection = new RTCPeerConnection(rtcConfig);
-
-    peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-            socket.emit('ice_candidate', { to: currentTarget, candidate: event.candidate });
-        }
-    };
-
-    peerConnection.ontrack = (event) => {
-        const stream = event.streams[0];
-        if (event.track.kind === 'audio') {
-            const remoteAudio = document.getElementById('remote-audio');
-            if (remoteAudio) remoteAudio.srcObject = stream;
-        } else if (event.track.kind === 'video') {
-            const remoteVideo = document.getElementById('remote-video');
-            if (remoteVideo) {
-                remoteVideo.srcObject = stream;
-                remoteVideo.classList.remove('hidden');
-                remoteVideo.play().catch(e => console.error("Playback error:", e));
-            }
-        }
-    };
-}
-
-async function toggleScreenShare() {
-    if (!peerConnection) {
-        alert("You must be in an active call to share your screen!");
-        return;
-    }
-
-    if (!isScreenSharing) {
-        try {
-            screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-            const screenTrack = screenStream.getVideoTracks()[0];
-
-            peerConnection.addTrack(screenTrack, screenStream);
-
-            // Renegotiate with peer so the receiver gets notified of the new stream
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            socket.emit('call_user', { to: currentTarget, offer });
-
-            screenTrack.onended = () => {
-                stopScreenShare();
-            };
-
-            document.getElementById('screen-share-btn').innerText = "🛑 Stop Sharing";
-            isScreenSharing = true;
-
-        } catch (err) {
-            console.error("Screen share error:", err);
-        }
-    } else {
-        stopScreenShare();
-    }
-}
-
-function stopScreenShare() {
-    if (screenStream) {
-        screenStream.getTracks().forEach(track => track.stop());
-        screenStream = null;
-    }
-
-    const sender = peerConnection ? peerConnection.getSenders().find(s => s.track && s.track.kind === 'video') : null;
-    if (sender) {
-        peerConnection.removeTrack(sender);
-    }
-
-    document.getElementById('screen-share-btn').innerText = "🖥️ Share Screen";
-    isScreenSharing = false;
-}
-
-function endCall() {
-    if (currentTarget) {
-        socket.emit('end_call', { to: currentTarget });
-    }
-    cleanupCall();
-}
-
-function cleanupCall() {
-    stopScreenShare();
-    if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
-    }
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-    }
-
-    isMuted = false;
-    const muteBtn = document.getElementById('mute-btn');
-    if (muteBtn) {
-        muteBtn.innerText = "🎙️ Mute";
-        muteBtn.style.background = "#29292e";
-    }
-
-    document.getElementById('call-banner').classList.add('hidden');
-    document.getElementById('remote-video').classList.add('hidden');
-}
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});

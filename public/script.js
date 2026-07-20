@@ -157,15 +157,25 @@ function initSocket() {
     });
 
     socket.on('incoming_call', async ({ from, offer }) => {
-        incomingOffer = { from, offer };
-        document.getElementById('call-banner').classList.remove('hidden');
-        document.getElementById('call-status-text').innerText = `Incoming Call from ${from}...`;
-        document.getElementById('accept-call-btn').classList.remove('hidden');
+        // If peer connection exists, this is a renegotiation (e.g. Screen Share added mid-call)
+        if (peerConnection) {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            socket.emit('answer_call', { to: from, answer });
+        } else {
+            incomingOffer = { from, offer };
+            document.getElementById('call-banner').classList.remove('hidden');
+            document.getElementById('call-status-text').innerText = `Incoming Call from ${from}...`;
+            document.getElementById('accept-call-btn').classList.remove('hidden');
+        }
     });
 
     socket.on('call_answered', async ({ answer }) => {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-        document.getElementById('call-status-text').innerText = `Call Connected`;
+        if (peerConnection) {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+            document.getElementById('call-status-text').innerText = `Call Connected`;
+        }
     });
 
     socket.on('ice_candidate', async ({ candidate }) => {
@@ -237,7 +247,7 @@ function toggleMute() {
     const audioTrack = localStream.getAudioTracks()[0];
     if (audioTrack) {
         isMuted = !isMuted;
-        audioTrack.enabled = !isMuted; // Toggle enabled status
+        audioTrack.enabled = !isMuted;
         
         const muteBtn = document.getElementById('mute-btn');
         muteBtn.innerText = isMuted ? "🔇 Unmute" : "🎙️ Mute";
@@ -297,6 +307,7 @@ function setupPeerConnection() {
             if (remoteVideo) {
                 remoteVideo.srcObject = stream;
                 remoteVideo.classList.remove('hidden');
+                remoteVideo.play().catch(e => console.error("Playback error:", e));
             }
         }
     };
@@ -313,12 +324,12 @@ async function toggleScreenShare() {
             screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
             const screenTrack = screenStream.getVideoTracks()[0];
 
-            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (sender) {
-                await sender.replaceTrack(screenTrack);
-            } else {
-                peerConnection.addTrack(screenTrack, screenStream);
-            }
+            peerConnection.addTrack(screenTrack, screenStream);
+
+            // Renegotiate with peer so the receiver gets notified of the new stream
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            socket.emit('call_user', { to: currentTarget, offer });
 
             screenTrack.onended = () => {
                 stopScreenShare();
@@ -366,8 +377,7 @@ function cleanupCall() {
     if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
     }
-    
-    // Reset Mute State
+
     isMuted = false;
     const muteBtn = document.getElementById('mute-btn');
     if (muteBtn) {
