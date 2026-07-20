@@ -3,17 +3,21 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const mongoose = require('mongoose');
-const CryptoJS = require('crypto-js'); // Add at top of server.js
-const SHARED_SECRET_KEY = "my-super-secret-vault-key";
+const { GoogleGenAI } = require('@google/genai');
+const CryptoJS = require('crypto-js');
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-// Paste your key inside the quotes:
-const GEMINI_API_KEY = "AQ.Ab8RN6LEYwnWi959nnUhfX_lcDUDViFbRtyiLH6-KfSBcyJzA";
+
 const PORT = process.env.PORT || 3000;
 
-// PASTE YOUR CONNECTION STRING HERE (Wrap in quotes and replace <db_password>):
-const MONGO_URI = "mongodb+srv://admin:firewaterchat@cluster0.zbclxvl.mongodb.net/?appName=Cluster0";
+// 1. Connection strings (replace with your actual password and key)
+const MONGO_URI = "mongodb+srv://admin:firewaterchat@cluster0.zbclxv1.mongodb.net/chat_db?retryWrites=true&w=majority&appName=Cluster0";
+const GEMINI_API_KEY = "AIzaSyAQ.Ab8RN6LEYwnWi959nnnUhfX_lcDUDViFbRtyiLH6-KfSBcyJzA";
+
+// 2. Initialize Gemini
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 // Connect to MongoDB Database
 mongoose.connect(MONGO_URI)
