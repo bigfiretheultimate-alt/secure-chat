@@ -90,16 +90,25 @@ function initSocket() {
     socket = io(window.location.origin, { transports: ['websocket', 'polling'] });
     socket.emit('register_active_user', currentUser);
 
+    // INTEGRATED: Modern Chat Bubble Renderer
     function displayMessage(data) {
         const chatBox = document.getElementById('chat-box');
         try {
             const bytes = CryptoJS.AES.decrypt(data.text, SHARED_SECRET_KEY);
             const decryptedText = bytes.toString(CryptoJS.enc.Utf8);
             if (decryptedText) {
-                const msgElement = document.createElement('p');
-                // Support newlines in displayed messages
+                const msgElement = document.createElement('div');
+                const isSentByMe = data.user === currentUser;
+
+                // Set bubble alignment class
+                msgElement.className = `message-bubble ${isSentByMe ? 'sent' : 'received'}`;
+                
                 const formattedText = decryptedText.replace(/\n/g, '<br>');
-                msgElement.innerHTML = `<strong>${data.user}:</strong> ${formattedText}`;
+                msgElement.innerHTML = `
+                    <div class="message-author">${data.user}</div>
+                    <div class="message-text">${formattedText}</div>
+                `;
+
                 chatBox.appendChild(msgElement);
                 chatBox.scrollTop = chatBox.scrollHeight;
             }

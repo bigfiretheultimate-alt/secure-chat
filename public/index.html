@@ -140,6 +140,47 @@
             height: 60px;
             margin: 8px 0;
         }
+        /* ==========================================================================
+        CHAT BUBBLE STYLES
+        ========================================================================== */
+
+        /* Generic Base Message Style */
+        .message-bubble {
+            max-width: 70%;
+            padding: 10px 14px;
+            margin: 4px 0;
+            border-radius: 16px;
+            font-size: 14px;
+            line-height: 1.4;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            display: inline-block;
+            clear: both;
+        }
+
+        /* Sent Messages (Your Messages - Blue, Right Aligned) */
+        .message-bubble.sent {
+            align-self: flex-end;
+            background: #007bff;
+            color: #ffffff;
+            border-bottom-right-radius: 2px;
+        }
+
+        /* Received Messages & Gemini AI (Dark Gray, Left Aligned) */
+        .message-bubble.received {
+            align-self: flex-start;
+            background: #29292e;
+            color: #e1e1e6;
+            border-bottom-left-radius: 2px;
+        }
+
+        /* Optional: Sender Name / Timestamp Header inside Bubbles */
+        .message-author {
+            font-size: 11px;
+            font-weight: bold;
+            margin-bottom: 3px;
+            opacity: 0.8;
+        }
     </style>
 </head>
 <body>
