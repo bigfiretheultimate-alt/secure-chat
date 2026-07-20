@@ -206,10 +206,17 @@
                         <button id="screen-share-btn" class="call-btn hidden" style="width:auto; padding: 6px 12px; background: #9146FF;" onclick="toggleScreenShare()">🖥️ Share Screen</button>
                     </div>
                 </div>
-                
-                <video id="remote-video" autoplay playsinline class="hidden" style="width: 100%; max-height: 250px; background: #000; border-radius: 6px; margin-bottom: 10px;"></video>
+
+                <div id="video-container" class="hidden" style="position: relative; width: 100%; margin-bottom: 10px;">
+                    <video id="remote-video" autoplay playsinline style="width: 100%; max-height: 250px; background: #000; border-radius: 6px; display: block;"></video>
+                    
+                    <button id="fullscreen-btn" onclick="toggleFullscreen()" style="position: absolute; top: 10px; right: 10px; width: auto; padding: 6px 10px; background: rgba(0, 0, 0, 0.7); color: white; border: 1px solid #555; border-radius: 4px; cursor: pointer; z-index: 10;">
+                        ⛶ Fullscreen
+                    </button>
+                </div>
+
                 <div id="chat-box"></div>
-                
+
                 <div class="input-row">
                     <textarea id="message-input" placeholder="Type private message... (Press Enter to send, Shift+Enter for new line)" disabled></textarea>
                     <button id="send-btn" onclick="sendPrivateMsg()" disabled>Send</button>

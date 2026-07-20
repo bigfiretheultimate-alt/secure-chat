@@ -3,7 +3,7 @@ let currentUser = "";
 let currentTarget = "";
 let isRegisterMode = false;
 const SHARED_SECRET_KEY = "my-really-really-really-secret-code";
-
+const stream = event.streams[0];
 let peerConnection;
 let localStream;
 let screenStream = null;
@@ -298,15 +298,27 @@ function setupPeerConnection() {
     };
 
     peerConnection.ontrack = (event) => {
-        const stream = event.streams[0];
+        // FIX 1: Extract stream from event
+        const stream = event.streams[0]; 
+
+        // FIX 2: Handle Audio Stream
         if (event.track.kind === 'audio') {
             const remoteAudio = document.getElementById('remote-audio');
-            if (remoteAudio) remoteAudio.srcObject = stream;
-        } else if (event.track.kind === 'video') {
+            if (remoteAudio) {
+                remoteAudio.srcObject = stream;
+            }
+        } 
+        // Handle Video Stream (Screen Share)
+        else if (event.track.kind === 'video') {
             const remoteVideo = document.getElementById('remote-video');
+            const videoContainer = document.getElementById('video-container');
+            
             if (remoteVideo) {
                 remoteVideo.srcObject = stream;
-                remoteVideo.classList.remove('hidden');
+                
+                // Show video container
+                if (videoContainer) videoContainer.classList.remove('hidden');
+                
                 remoteVideo.play().catch(e => console.error("Playback error:", e));
             }
         }
@@ -378,13 +390,32 @@ function cleanupCall() {
         localStream.getTracks().forEach(track => track.stop());
     }
 
-    isMuted = false;
-    const muteBtn = document.getElementById('mute-btn');
-    if (muteBtn) {
-        muteBtn.innerText = "🎙️ Mute";
-        muteBtn.style.background = "#29292e";
-    }
-
+    // Hide video container on call end
+    const videoContainer = document.getElementById('video-container');
+    if (videoContainer) videoContainer.classList.add('hidden');
+    
     document.getElementById('call-banner').classList.add('hidden');
-    document.getElementById('remote-video').classList.add('hidden');
+}
+function toggleFullscreen() {
+    const videoContainer = document.getElementById('video-container');
+    const videoElement = document.getElementById('remote-video');
+
+    // Select the target element (prefer full container, fall back to video element)
+    const target = videoContainer || videoElement;
+
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        // Enter Fullscreen (supports modern browsers & Safari)
+        if (target.requestFullscreen) {
+            target.requestFullscreen();
+        } else if (target.webkitRequestFullscreen) { /* Safari */
+            target.webkitRequestFullscreen();
+        }
+    } else {
+        // Exit Fullscreen
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) { /* Safari */
+            document.webkitExitFullscreen();
+        }
+    }
 }
