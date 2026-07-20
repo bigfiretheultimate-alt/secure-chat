@@ -351,6 +351,17 @@ async function toggleScreenShare() {
 
             peerConnection.addTrack(screenTrack, screenStream);
 
+            const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
+            if (sender && sender.setParameters) {
+                const parameters = sender.getParameters();
+                if (!parameters.encodings) {
+                    parameters.encodings = [{}];
+                }
+                // Set max bitrate to 3 Mbps (3,000,000 bits/sec) for crisp HD quality
+                parameters.encodings[0].maxBitrate = 3000000; 
+                sender.setParameters(parameters).catch(e => console.error(e));
+            }
+
             // Renegotiate with peer so the receiver gets notified of the new stream
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
