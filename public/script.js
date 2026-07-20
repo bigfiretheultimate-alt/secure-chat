@@ -3,7 +3,7 @@ let currentUser = "";
 let currentTarget = "";
 let isRegisterMode = false;
 const SHARED_SECRET_KEY = "my-really-really-really-secret-code";
-const stream = event.streams[0];
+
 let peerConnection;
 let localStream;
 let screenStream = null;
@@ -145,8 +145,10 @@ function initSocket() {
 
     socket.on('load_history', (history) => {
         const chatBox = document.getElementById('chat-box');
-        chatBox.innerHTML = ""; 
-        history.forEach(msg => displayMessage(msg));
+        if (chatBox) {
+            chatBox.innerHTML = ""; 
+            history.forEach(msg => displayMessage(msg));
+        }
     });
 
     socket.on('chat_message', (data) => {
@@ -157,7 +159,6 @@ function initSocket() {
     });
 
     socket.on('incoming_call', async ({ from, offer }) => {
-        // If peer connection exists, this is a renegotiation (e.g. Screen Share added mid-call)
         if (peerConnection) {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
             const answer = await peerConnection.createAnswer();
@@ -259,16 +260,21 @@ async function startCall() {
     if (!currentTarget) return;
     setupPeerConnection();
 
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
 
-    socket.emit('call_user', { to: currentTarget, offer });
-    document.getElementById('call-banner').classList.remove('hidden');
-    document.getElementById('call-status-text').innerText = `Calling ${currentTarget}...`;
-    document.getElementById('accept-call-btn').classList.add('hidden');
+        socket.emit('call_user', { to: currentTarget, offer });
+        document.getElementById('call-banner').classList.remove('hidden');
+        document.getElementById('call-status-text').innerText = `Calling ${currentTarget}...`;
+        document.getElementById('accept-call-btn').classList.add('hidden');
+    } catch (err) {
+        console.error("Microphone access error:", err);
+        alert("Unable to access microphone. Make sure permissions are granted and you are on HTTPS/localhost.");
+    }
 }
 
 async function acceptCall() {
@@ -276,16 +282,21 @@ async function acceptCall() {
     currentTarget = incomingOffer.from;
     setupPeerConnection();
 
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingOffer.offer));
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingOffer.offer));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
 
-    socket.emit('answer_call', { to: currentTarget, answer });
-    document.getElementById('call-status-text').innerText = `In Call with ${currentTarget}`;
-    document.getElementById('accept-call-btn').classList.add('hidden');
+        socket.emit('answer_call', { to: currentTarget, answer });
+        document.getElementById('call-status-text').innerText = `In Call with ${currentTarget}`;
+        document.getElementById('accept-call-btn').classList.add('hidden');
+    } catch (err) {
+        console.error("Microphone access error:", err);
+        alert("Unable to access microphone.");
+    }
 }
 
 function setupPeerConnection() {
@@ -298,27 +309,20 @@ function setupPeerConnection() {
     };
 
     peerConnection.ontrack = (event) => {
-        // FIX 1: Extract stream from event
         const stream = event.streams[0]; 
 
-        // FIX 2: Handle Audio Stream
         if (event.track.kind === 'audio') {
             const remoteAudio = document.getElementById('remote-audio');
             if (remoteAudio) {
                 remoteAudio.srcObject = stream;
             }
-        } 
-        // Handle Video Stream (Screen Share)
-        else if (event.track.kind === 'video') {
+        } else if (event.track.kind === 'video') {
             const remoteVideo = document.getElementById('remote-video');
             const videoContainer = document.getElementById('video-container');
             
             if (remoteVideo) {
                 remoteVideo.srcObject = stream;
-                
-                // Show video container
                 if (videoContainer) videoContainer.classList.remove('hidden');
-                
                 remoteVideo.play().catch(e => console.error("Playback error:", e));
             }
         }
@@ -338,7 +342,6 @@ async function toggleScreenShare() {
 
             peerConnection.addTrack(screenTrack, screenStream);
 
-            // Renegotiate with peer so the receiver gets notified of the new stream
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
             socket.emit('call_user', { to: currentTarget, offer });
@@ -390,31 +393,28 @@ function cleanupCall() {
         localStream.getTracks().forEach(track => track.stop());
     }
 
-    // Hide video container on call end
     const videoContainer = document.getElementById('video-container');
     if (videoContainer) videoContainer.classList.add('hidden');
     
     document.getElementById('call-banner').classList.add('hidden');
 }
+
 function toggleFullscreen() {
     const videoContainer = document.getElementById('video-container');
     const videoElement = document.getElementById('remote-video');
 
-    // Select the target element (prefer full container, fall back to video element)
     const target = videoContainer || videoElement;
 
     if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-        // Enter Fullscreen (supports modern browsers & Safari)
         if (target.requestFullscreen) {
             target.requestFullscreen();
-        } else if (target.webkitRequestFullscreen) { /* Safari */
+        } else if (target.webkitRequestFullscreen) {
             target.webkitRequestFullscreen();
         }
     } else {
-        // Exit Fullscreen
         if (document.exitFullscreen) {
             document.exitFullscreen();
-        } else if (document.webkitExitFullscreen) { /* Safari */
+        } else if (document.webkitExitFullscreen) {
             document.webkitExitFullscreen();
         }
     }
