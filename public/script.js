@@ -4,13 +4,12 @@ let currentTarget = "";
 let isRegisterMode = false;
 const SHARED_SECRET_KEY = "my-super-secret-vault-key";
 
-// WebRTC Voice Call Variables
 let peerConnection;
 let localStream;
 let incomingOffer = null;
 const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-// --- Restore session on initial load ---
+// Restore session on page load
 window.addEventListener('DOMContentLoaded', () => {
     const savedUser = sessionStorage.getItem('chat_username');
     if (savedUser) {
@@ -20,6 +19,15 @@ window.addEventListener('DOMContentLoaded', () => {
         document.getElementById('welcome-bar').innerText = `Logged in as: ${currentUser}`;
         initSocket();
     }
+
+    // Keydown listener for Enter to send vs Shift+Enter for newline
+    const msgInput = document.getElementById('message-input');
+    msgInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault(); // Prevents adding a new line
+            sendPrivateMsg();
+        }
+    });
 });
 
 function logout() {
@@ -63,7 +71,7 @@ async function submitAuth() {
                 errorText.innerText = "Account created! Please log in.";
             } else {
                 currentUser = data.username;
-                sessionStorage.setItem('chat_username', currentUser); // Store session
+                sessionStorage.setItem('chat_username', currentUser);
                 document.getElementById('auth-screen').classList.add('hidden');
                 document.getElementById('app-screen').classList.remove('hidden');
                 document.getElementById('welcome-bar').innerText = `Logged in as: ${currentUser}`;
@@ -89,7 +97,9 @@ function initSocket() {
             const decryptedText = bytes.toString(CryptoJS.enc.Utf8);
             if (decryptedText) {
                 const msgElement = document.createElement('p');
-                msgElement.innerHTML = `<strong>${data.user}:</strong> ${decryptedText}`;
+                // Support newlines in displayed messages
+                const formattedText = decryptedText.replace(/\n/g, '<br>');
+                msgElement.innerHTML = `<strong>${data.user}:</strong> ${formattedText}`;
                 chatBox.appendChild(msgElement);
                 chatBox.scrollTop = chatBox.scrollHeight;
             }
@@ -136,7 +146,6 @@ function initSocket() {
         }
     });
 
-    // --- Voice Call WebRTC Handlers ---
     socket.on('incoming_call', async ({ from, offer }) => {
         incomingOffer = { from, offer };
         document.getElementById('call-banner').classList.remove('hidden');
@@ -160,7 +169,6 @@ function initSocket() {
     });
 }
 
-// Mobile Interface Toggle Logic
 function showMobileTab(tab) {
     const sidebar = document.getElementById('sidebar');
     const mainChat = document.getElementById('main-chat');
@@ -204,7 +212,6 @@ function sendPrivateMsg() {
     }
 }
 
-// --- WebRTC Voice Call Functions ---
 async function startCall() {
     if (!currentTarget) return;
     setupPeerConnection();
