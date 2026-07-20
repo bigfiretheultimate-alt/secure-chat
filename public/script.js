@@ -337,11 +337,21 @@ async function toggleScreenShare() {
 
     if (!isScreenSharing) {
         try {
-            screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            // Request High Resolution Screen Sharing
+            screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: {
+                    width: { ideal: 1920, max: 3840 },
+                    height: { ideal: 1080, max: 2160 },
+                    frameRate: { ideal: 30, max: 60 }
+                },
+                audio: true
+            });
+
             const screenTrack = screenStream.getVideoTracks()[0];
 
             peerConnection.addTrack(screenTrack, screenStream);
 
+            // Renegotiate with peer so the receiver gets notified of the new stream
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
             socket.emit('call_user', { to: currentTarget, offer });
