@@ -15,7 +15,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GoogleGenAIClass = genai.GoogleGenAI || genai;
 const ai = new GoogleGenAIClass({ apiKey: GEMINI_API_KEY });
 // Make sure this matches the secret key used in your frontend script.js!
-const SHARED_SECRET_KEY = process.env.SHARED_SECRET_KEY || "my-super-secret-vault-key";
+const SHARED_SECRET_KEY = process.env.SHARED_SECRET_KEY;
 // Connect to MongoDB Database
 mongoose.connect(MONGO_URI)
     .then(() => console.log('Connected to MongoDB Atlas successfully!'))

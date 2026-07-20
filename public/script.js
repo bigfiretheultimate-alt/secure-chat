@@ -2,7 +2,7 @@ let socket;
 let currentUser = "";
 let currentTarget = "";
 let isRegisterMode = false;
-const SHARED_SECRET_KEY = "my-super-secret-vault-key";
+const SHARED_SECRET_KEY = process.env.SHARED_SECRET_KEY;
 
 let peerConnection;
 let localStream;
