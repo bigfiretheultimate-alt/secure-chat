@@ -20,7 +20,6 @@
             overflow: hidden;
         }
 
-        /* Fullscreen Layout for PC */
         .container { 
             background: #202024; 
             padding: 20px; 
@@ -44,7 +43,6 @@
             font-family: inherit;
         }
 
-        /* Textarea customization for Shift+Enter support */
         textarea {
             resize: none;
             height: 60px;
@@ -60,16 +58,13 @@
         .call-btn { background: #04d361; }
         .end-btn { background: #f75a68; }
 
-        /* Flex Layout filling full screen */
         .flex-layout { display: flex; flex-grow: 1; gap: 20px; height: calc(100% - 60px); }
         
         .mobile-nav { display: none; margin-bottom: 10px; gap: 10px; }
         
-        /* Desktop Split View */
         .sidebar { width: 280px; border-right: 1px solid #29292e; padding-right: 15px; overflow-y: auto; flex-shrink: 0; }
         .main-chat { flex-grow: 1; display: flex; flex-direction: column; height: 100%; }
 
-        /* Mobile Adjustments */
         @media (max-width: 768px) {
             .container { padding: 12px; }
             .mobile-nav { display: flex; }
@@ -78,13 +73,12 @@
             .sidebar.mobile-hidden, .main-chat.mobile-hidden { display: none; }
         }
 
-        /* CONSTANT SIZE & SCROLLABLE CHAT BOX INTEGRATION */
         #chat-box { 
             flex-grow: 1;
-            height: 400px;           /* Sets constant vertical height */
-            max-height: calc(100vh - 220px); /* Keeps bounded inside layout */
-            overflow-y: auto;        /* Adds vertical scrollbar when overflowing */
-            overflow-x: hidden;      /* Stops horizontal overflow */
+            height: 400px; 
+            max-height: calc(100vh - 220px);
+            overflow-y: auto;
+            overflow-x: hidden;
             padding: 12px; 
             background: #121214; 
             border: 1px solid #29292e; 
@@ -95,20 +89,10 @@
             gap: 8px;
         }
 
-        /* Dark Theme Scrollbar Styling for Chat Box */
-        #chat-box::-webkit-scrollbar {
-            width: 6px;
-        }
-        #chat-box::-webkit-scrollbar-track {
-            background: #121214;
-        }
-        #chat-box::-webkit-scrollbar-thumb {
-            background: #29292e;
-            border-radius: 4px;
-        }
-        #chat-box::-webkit-scrollbar-thumb:hover {
-            background: #007bff;
-        }
+        #chat-box::-webkit-scrollbar { width: 6px; }
+        #chat-box::-webkit-scrollbar-track { background: #121214; }
+        #chat-box::-webkit-scrollbar-thumb { background: #29292e; border-radius: 4px; }
+        #chat-box::-webkit-scrollbar-thumb:hover { background: #007bff; }
         
         .user-card { 
             display: flex; align-items: center; justify-content: space-between; 
@@ -140,11 +124,7 @@
             height: 60px;
             margin: 8px 0;
         }
-        /* ==========================================================================
-        CHAT BUBBLE STYLES
-        ========================================================================== */
 
-        /* Generic Base Message Style */
         .message-bubble {
             max-width: 70%;
             padding: 10px 14px;
@@ -158,7 +138,6 @@
             clear: both;
         }
 
-        /* Sent Messages (Your Messages - Blue, Right Aligned) */
         .message-bubble.sent {
             align-self: flex-end;
             background: #007bff;
@@ -166,7 +145,6 @@
             border-bottom-right-radius: 2px;
         }
 
-        /* Received Messages & Gemini AI (Dark Gray, Left Aligned) */
         .message-bubble.received {
             align-self: flex-start;
             background: #29292e;
@@ -174,7 +152,6 @@
             border-bottom-left-radius: 2px;
         }
 
-        /* Optional: Sender Name / Timestamp Header inside Bubbles */
         .message-author {
             font-size: 11px;
             font-weight: bold;
@@ -225,11 +202,14 @@
                     <span id="chat-header">Select a contact</span>
                     <div style="display: flex; gap: 5px;">
                         <button id="start-call-btn" class="call-btn hidden" style="width:auto; padding: 6px 12px;" onclick="startCall()">📞 Call</button>
+                        <button id="mute-btn" class="alt-btn hidden" style="width:auto; padding: 6px 12px;" onclick="toggleMute()">🎙️ Mute</button>
                         <button id="screen-share-btn" class="call-btn hidden" style="width:auto; padding: 6px 12px; background: #9146FF;" onclick="toggleScreenShare()">🖥️ Share Screen</button>
                     </div>
                 </div>
-                <div id="chat-box"></div>
+                
                 <video id="remote-video" autoplay playsinline class="hidden" style="width: 100%; max-height: 250px; background: #000; border-radius: 6px; margin-bottom: 10px;"></video>
+                <div id="chat-box"></div>
+                
                 <div class="input-row">
                     <textarea id="message-input" placeholder="Type private message... (Press Enter to send, Shift+Enter for new line)" disabled></textarea>
                     <button id="send-btn" onclick="sendPrivateMsg()" disabled>Send</button>

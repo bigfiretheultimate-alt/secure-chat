@@ -3,12 +3,16 @@ let currentUser = "";
 let currentTarget = "";
 let isRegisterMode = false;
 const SHARED_SECRET_KEY = "my-really-really-really-secret-code";
+
 let peerConnection;
 let localStream;
-let incomingOffer = null;
-const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 let screenStream = null;
+let incomingOffer = null;
+let isMuted = false;
 let isScreenSharing = false;
+
+const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
 // Restore session on page load
 window.addEventListener('DOMContentLoaded', () => {
     const savedUser = sessionStorage.getItem('chat_username');
@@ -20,11 +24,10 @@ window.addEventListener('DOMContentLoaded', () => {
         initSocket();
     }
 
-    // Keydown listener for Enter to send vs Shift+Enter for newline
     const msgInput = document.getElementById('message-input');
     msgInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault(); // Prevents adding a new line
+            e.preventDefault();
             sendPrivateMsg();
         }
     });
@@ -90,7 +93,6 @@ function initSocket() {
     socket = io(window.location.origin, { transports: ['websocket', 'polling'] });
     socket.emit('register_active_user', currentUser);
 
-    // INTEGRATED: Modern Chat Bubble Renderer
     function displayMessage(data) {
         const chatBox = document.getElementById('chat-box');
         try {
@@ -100,7 +102,6 @@ function initSocket() {
                 const msgElement = document.createElement('div');
                 const isSentByMe = data.user === currentUser;
 
-                // Set bubble alignment class
                 msgElement.className = `message-bubble ${isSentByMe ? 'sent' : 'received'}`;
                 
                 const formattedText = decryptedText.replace(/\n/g, '<br>');
@@ -198,6 +199,8 @@ function selectTargetUser(targetUsername) {
     document.getElementById('message-input').disabled = false;
     document.getElementById('send-btn').disabled = false;
     document.getElementById('start-call-btn').classList.remove('hidden');
+    document.getElementById('mute-btn').classList.remove('hidden');
+    document.getElementById('screen-share-btn').classList.remove('hidden');
 
     if (window.innerWidth <= 768) {
         showMobileTab('chat');
@@ -218,6 +221,27 @@ function sendPrivateMsg() {
         const encryptedText = CryptoJS.AES.encrypt(text, SHARED_SECRET_KEY).toString();
         socket.emit('private_message', { to: currentTarget, text: encryptedText });
         msgInput.value = "";
+    }
+}
+
+/* ==========================================================================
+   VOICE, MUTE, & SCREEN SHARE LOGIC
+   ========================================================================== */
+
+function toggleMute() {
+    if (!localStream) {
+        alert("You must be in an active call to mute your microphone!");
+        return;
+    }
+
+    const audioTrack = localStream.getAudioTracks()[0];
+    if (audioTrack) {
+        isMuted = !isMuted;
+        audioTrack.enabled = !isMuted; // Toggle enabled status
+        
+        const muteBtn = document.getElementById('mute-btn');
+        muteBtn.innerText = isMuted ? "🔇 Unmute" : "🎙️ Mute";
+        muteBtn.style.background = isMuted ? "#f75a68" : "#29292e";
     }
 }
 
@@ -264,33 +288,18 @@ function setupPeerConnection() {
     };
 
     peerConnection.ontrack = (event) => {
+        const stream = event.streams[0];
         if (event.track.kind === 'audio') {
             const remoteAudio = document.getElementById('remote-audio');
-            remoteAudio.srcObject = event.streams[0];
+            if (remoteAudio) remoteAudio.srcObject = stream;
         } else if (event.track.kind === 'video') {
             const remoteVideo = document.getElementById('remote-video');
-            remoteVideo.srcObject = event.streams[0];
-            remoteVideo.classList.remove('hidden');
+            if (remoteVideo) {
+                remoteVideo.srcObject = stream;
+                remoteVideo.classList.remove('hidden');
+            }
         }
     };
-}
-
-function endCall() {
-    if (currentTarget) {
-        socket.emit('end_call', { to: currentTarget });
-    }
-    cleanupCall();
-}
-
-function cleanupCall() {
-    if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
-    }
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-    }
-    document.getElementById('call-banner').classList.add('hidden');
 }
 
 async function toggleScreenShare() {
@@ -301,19 +310,16 @@ async function toggleScreenShare() {
 
     if (!isScreenSharing) {
         try {
-            // Capture the screen/window stream from browser
             screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
             const screenTrack = screenStream.getVideoTracks()[0];
 
-            // Replace or add video track on the WebRTC peer connection
             const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
             if (sender) {
-                sender.replaceTrack(screenTrack);
+                await sender.replaceTrack(screenTrack);
             } else {
                 peerConnection.addTrack(screenTrack, screenStream);
             }
 
-            // Handle when user stops sharing via browser UI floating bar
             screenTrack.onended = () => {
                 stopScreenShare();
             };
@@ -322,7 +328,7 @@ async function toggleScreenShare() {
             isScreenSharing = true;
 
         } catch (err) {
-            console.error("Screen sharing canceled or failed:", err);
+            console.error("Screen share error:", err);
         }
     } else {
         stopScreenShare();
@@ -335,7 +341,6 @@ function stopScreenShare() {
         screenStream = null;
     }
 
-    // Remove video sender if present
     const sender = peerConnection ? peerConnection.getSenders().find(s => s.track && s.track.kind === 'video') : null;
     if (sender) {
         peerConnection.removeTrack(sender);
@@ -345,23 +350,11 @@ function stopScreenShare() {
     isScreenSharing = false;
 }
 
-// 4. Update selectTargetUser to show the screen share button
-function selectTargetUser(targetUsername) {
-    currentTarget = targetUsername;
-    
-    document.getElementById('chat-header').innerText = `Chatting with: ${currentTarget}`;
-    document.getElementById('message-input').disabled = false;
-    document.getElementById('send-btn').disabled = false;
-    document.getElementById('start-call-btn').classList.remove('hidden');
-    document.getElementById('screen-share-btn').classList.remove('hidden'); // Show button
-
-    if (window.innerWidth <= 768) {
-        showMobileTab('chat');
+function endCall() {
+    if (currentTarget) {
+        socket.emit('end_call', { to: currentTarget });
     }
-
-    if (socket) {
-        socket.emit('get_private_history', currentTarget);
-    }
+    cleanupCall();
 }
 
 function cleanupCall() {
@@ -373,6 +366,15 @@ function cleanupCall() {
     if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
     }
+    
+    // Reset Mute State
+    isMuted = false;
+    const muteBtn = document.getElementById('mute-btn');
+    if (muteBtn) {
+        muteBtn.innerText = "🎙️ Mute";
+        muteBtn.style.background = "#29292e";
+    }
+
     document.getElementById('call-banner').classList.add('hidden');
     document.getElementById('remote-video').classList.add('hidden');
 }
