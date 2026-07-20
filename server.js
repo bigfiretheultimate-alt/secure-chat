@@ -138,7 +138,7 @@ io.on('connection', (socket) => {
 
                 // 2. Fetch answer from Gemini
                 const response = await ai.models.generateContent({
-                    model: 'gemini-2.5-flash',
+                    model: 'gemini-flash-latest',
                     contents: plainPrompt,
                 });
                 const plainReply = response.text || "Sorry, I couldn't process that.";
