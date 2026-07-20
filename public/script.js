@@ -4,6 +4,29 @@ let currentTarget = "";
 let isRegisterMode = false;
 const SHARED_SECRET_KEY = "my-super-secret-vault-key";
 
+// WebRTC Voice Call Variables
+let peerConnection;
+let localStream;
+let incomingOffer = null;
+const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+// --- Restore session on initial load ---
+window.addEventListener('DOMContentLoaded', () => {
+    const savedUser = sessionStorage.getItem('chat_username');
+    if (savedUser) {
+        currentUser = savedUser;
+        document.getElementById('auth-screen').classList.add('hidden');
+        document.getElementById('app-screen').classList.remove('hidden');
+        document.getElementById('welcome-bar').innerText = `Logged in as: ${currentUser}`;
+        initSocket();
+    }
+});
+
+function logout() {
+    sessionStorage.removeItem('chat_username');
+    location.reload();
+}
+
 function toggleAuthMode() {
     isRegisterMode = !isRegisterMode;
     document.getElementById('auth-title').innerText = isRegisterMode ? "Create Account" : "Secure Login";
@@ -40,6 +63,7 @@ async function submitAuth() {
                 errorText.innerText = "Account created! Please log in.";
             } else {
                 currentUser = data.username;
+                sessionStorage.setItem('chat_username', currentUser); // Store session
                 document.getElementById('auth-screen').classList.add('hidden');
                 document.getElementById('app-screen').classList.remove('hidden');
                 document.getElementById('welcome-bar').innerText = `Logged in as: ${currentUser}`;
@@ -56,7 +80,6 @@ async function submitAuth() {
 
 function initSocket() {
     socket = io(window.location.origin, { transports: ['websocket', 'polling'] });
-
     socket.emit('register_active_user', currentUser);
 
     function displayMessage(data) {
@@ -73,13 +96,12 @@ function initSocket() {
         } catch (e) { console.error("Decryption error", e); }
     }
 
-    // Render directory showing both online & offline users
     socket.on('update_user_directory', (userList) => {
         const listDiv = document.getElementById('users-list');
         listDiv.innerHTML = "";
 
         userList.forEach(account => {
-            if (account.username === currentUser) return; // Hide self
+            if (account.username === currentUser) return;
 
             const card = document.createElement('div');
             const isActive = account.username === currentTarget;
@@ -89,11 +111,11 @@ function initSocket() {
             const statusText = account.isOnline ? 'Online' : 'Offline';
 
             card.innerHTML = `
-                <div class="user-info">
+                <div>
                     <span class="dot ${dotClass}"></span>
                     <span>${account.username}</span>
                 </div>
-                <span class="status-label">${statusText}</span>
+                <span style="font-size: 11px; opacity:0.7;">${statusText}</span>
             `;
 
             card.onclick = () => selectTargetUser(account.username);
@@ -113,26 +135,57 @@ function initSocket() {
             displayMessage(data);
         }
     });
+
+    // --- Voice Call WebRTC Handlers ---
+    socket.on('incoming_call', async ({ from, offer }) => {
+        incomingOffer = { from, offer };
+        document.getElementById('call-banner').classList.remove('hidden');
+        document.getElementById('call-status-text').innerText = `Incoming Call from ${from}...`;
+        document.getElementById('accept-call-btn').classList.remove('hidden');
+    });
+
+    socket.on('call_answered', async ({ answer }) => {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        document.getElementById('call-status-text').innerText = `Call Connected`;
+    });
+
+    socket.on('ice_candidate', async ({ candidate }) => {
+        if (peerConnection && candidate) {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+    });
+
+    socket.on('call_ended', () => {
+        cleanupCall();
+    });
+}
+
+// Mobile Interface Toggle Logic
+function showMobileTab(tab) {
+    const sidebar = document.getElementById('sidebar');
+    const mainChat = document.getElementById('main-chat');
+    
+    if (tab === 'contacts') {
+        sidebar.classList.remove('mobile-hidden');
+        mainChat.classList.add('mobile-hidden');
+    } else {
+        sidebar.classList.add('mobile-hidden');
+        mainChat.classList.remove('mobile-hidden');
+    }
 }
 
 function selectTargetUser(targetUsername) {
     currentTarget = targetUsername;
     
-    // Update Chat Header & Enable Controls
     document.getElementById('chat-header').innerText = `Chatting with: ${currentTarget}`;
     document.getElementById('message-input').disabled = false;
     document.getElementById('send-btn').disabled = false;
+    document.getElementById('start-call-btn').classList.remove('hidden');
 
-    // Trigger UI selection styling update
-    document.querySelectorAll('.user-card').forEach(card => {
-        if(card.innerText.includes(targetUsername)) {
-            card.classList.add('active-target');
-        } else {
-            card.classList.remove('active-target');
-        }
-    });
+    if (window.innerWidth <= 768) {
+        showMobileTab('chat');
+    }
 
-    // Request chat history with selected user
     if (socket) {
         socket.emit('get_private_history', currentTarget);
     }
@@ -149,4 +202,71 @@ function sendPrivateMsg() {
         socket.emit('private_message', { to: currentTarget, text: encryptedText });
         msgInput.value = "";
     }
+}
+
+// --- WebRTC Voice Call Functions ---
+async function startCall() {
+    if (!currentTarget) return;
+    setupPeerConnection();
+
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+
+    socket.emit('call_user', { to: currentTarget, offer });
+    document.getElementById('call-banner').classList.remove('hidden');
+    document.getElementById('call-status-text').innerText = `Calling ${currentTarget}...`;
+    document.getElementById('accept-call-btn').classList.add('hidden');
+}
+
+async function acceptCall() {
+    if (!incomingOffer) return;
+    currentTarget = incomingOffer.from;
+    setupPeerConnection();
+
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingOffer.offer));
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+
+    socket.emit('answer_call', { to: currentTarget, answer });
+    document.getElementById('call-status-text').innerText = `In Call with ${currentTarget}`;
+    document.getElementById('accept-call-btn').classList.add('hidden');
+}
+
+function setupPeerConnection() {
+    peerConnection = new RTCPeerConnection(rtcConfig);
+
+    peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+            socket.emit('ice_candidate', { to: currentTarget, candidate: event.candidate });
+        }
+    };
+
+    peerConnection.ontrack = (event) => {
+        const remoteAudio = document.getElementById('remote-audio');
+        remoteAudio.srcObject = event.streams[0];
+    };
+}
+
+function endCall() {
+    if (currentTarget) {
+        socket.emit('end_call', { to: currentTarget });
+    }
+    cleanupCall();
+}
+
+function cleanupCall() {
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
+    if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+    }
+    document.getElementById('call-banner').classList.add('hidden');
 }

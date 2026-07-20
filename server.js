@@ -9,31 +9,23 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 
-// Dynamic In-Memory Databases
 const REGISTERED_USERS = {}; 
-const ACTIVE_USERS = {}; // Maps username -> socket.id
-const MESSAGE_HISTORY = {}; // Maps "userA-userB" -> array of last 10 messages
+const ACTIVE_USERS = {}; // username -> socket.id
+const MESSAGE_HISTORY = {}; 
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Account Creation Endpoint
 app.post('/register', (req, res) => {
     const { username, password } = req.body;
-    if (!username || !password) {
-        return res.status(400).json({ success: false, message: "Missing fields" });
-    }
-    if (REGISTERED_USERS[username]) {
-        return res.status(400).json({ success: false, message: "Username taken" });
-    }
-    REGISTERED_USERS[username] = password;
+    if (!username || !password) return res.status(400).json({ success: false, message: "Missing fields" });
+    if (REGISTERED_USERS[username]) return res.status(400).json({ success: false, message: "Username taken" });
     
-    // Broadcast newly updated user directory to everyone
+    REGISTERED_USERS[username] = password;
     broadcastUserDirectory();
     res.json({ success: true });
 });
 
-// Login Endpoint
 app.post('/login', (req, res) => {
     const { username, password } = req.body;
     if (REGISTERED_USERS[username] && REGISTERED_USERS[username] === password) {
@@ -43,12 +35,10 @@ app.post('/login', (req, res) => {
     }
 });
 
-// Helper to standardise dynamic chat room channel IDs alphabetically
 function getRoomId(user1, user2) {
     return [user1, user2].sort().join('-');
 }
 
-// Helper to broadcast full directory (online + offline)
 function broadcastUserDirectory() {
     const directory = Object.keys(REGISTERED_USERS).map(username => ({
         username: username,
@@ -60,44 +50,64 @@ function broadcastUserDirectory() {
 io.on('connection', (socket) => {
     let authenticatedUser = null;
 
-    // Triggered right after successful frontend login
     socket.on('register_active_user', (username) => {
         authenticatedUser = username;
         ACTIVE_USERS[username] = socket.id;
-        
-        // Send full user directory to all connected clients
         broadcastUserDirectory();
     });
 
-    // Load private history between two specific users
     socket.on('get_private_history', (targetUser) => {
         if (!authenticatedUser) return;
         const room = getRoomId(authenticatedUser, targetUser);
         socket.emit('load_history', MESSAGE_HISTORY[room] || []);
     });
 
-    // Handle targeted direct message delivery
     socket.on('private_message', (data) => {
         if (!authenticatedUser) return;
         const { to, text } = data;
         const room = getRoomId(authenticatedUser, to);
-
         const newMsg = { user: authenticatedUser, text };
 
         if (!MESSAGE_HISTORY[room]) MESSAGE_HISTORY[room] = [];
         MESSAGE_HISTORY[room].push(newMsg);
         if (MESSAGE_HISTORY[room].length > 10) MESSAGE_HISTORY[room].shift();
 
-        // Deliver to recipient if online
         const recipientSocketId = ACTIVE_USERS[to];
         if (recipientSocketId) {
             io.to(recipientSocketId).emit('chat_message', { ...newMsg, room });
         }
-        // Deliver back to sender's UI
         socket.emit('chat_message', { ...newMsg, room });
     });
 
-    // Handle disconnect cleanups
+    // --- WebRTC Voice Call Signaling ---
+    socket.on('call_user', ({ to, offer }) => {
+        const recipientSocketId = ACTIVE_USERS[to];
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('incoming_call', { from: authenticatedUser, offer });
+        }
+    });
+
+    socket.on('answer_call', ({ to, answer }) => {
+        const recipientSocketId = ACTIVE_USERS[to];
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('call_answered', { from: authenticatedUser, answer });
+        }
+    });
+
+    socket.on('ice_candidate', ({ to, candidate }) => {
+        const recipientSocketId = ACTIVE_USERS[to];
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('ice_candidate', { from: authenticatedUser, candidate });
+        }
+    });
+
+    socket.on('end_call', ({ to }) => {
+        const recipientSocketId = ACTIVE_USERS[to];
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('call_ended');
+        }
+    });
+
     socket.on('disconnect', () => {
         if (authenticatedUser) {
             delete ACTIVE_USERS[authenticatedUser];
