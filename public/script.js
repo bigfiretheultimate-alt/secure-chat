@@ -1,63 +1,56 @@
-let socket;
-let currentUser = "";
-let currentTarget = "";
-let isRegisterMode = false;
+const socket = io();
+
+// Config & State
+const rtcConfig = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+    ]
+};
+
 const SHARED_SECRET_KEY = "my-really-really-really-secret-code";
 
-let peerConnection;
-let localStream;
+let currentUser = "";
+let currentTarget = "";
+let isGroupChat = false;
+
+// WebRTC State (1-on-1)
+let peerConnection = null;
+let localStream = null;
 let screenStream = null;
-let incomingOffer = null;
 let isMuted = false;
 let isScreenSharing = false;
 
-const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+// WebRTC State (Group Mesh)
+let groupPeers = {}; // { socketId: RTCPeerConnection }
+let groupLocalStream = null;
+let inGroupCall = false;
 
-// Restore session on page load
-window.addEventListener('DOMContentLoaded', () => {
-    const savedUser = sessionStorage.getItem('chat_username');
-    if (savedUser) {
-        currentUser = savedUser;
-        document.getElementById('auth-screen').classList.add('hidden');
-        document.getElementById('app-screen').classList.remove('hidden');
-        document.getElementById('welcome-bar').innerText = `Logged in as: ${currentUser}`;
-        initSocket();
-    }
-
-    const msgInput = document.getElementById('message-input');
-    msgInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendPrivateMsg();
-        }
-    });
-});
-
-function logout() {
-    sessionStorage.removeItem('chat_username');
-    location.reload();
-}
+/* ==========================================================================
+   AUTHENTICATION LOGIC
+   ========================================================================== */
+let isLoginMode = true;
 
 function toggleAuthMode() {
-    isRegisterMode = !isRegisterMode;
-    document.getElementById('auth-title').innerText = isRegisterMode ? "Create Account" : "Secure Login";
-    document.getElementById('primary-auth-btn').innerText = isRegisterMode ? "Register Account" : "Login";
-    document.getElementById('toggle-auth-btn').innerText = isRegisterMode ? "Back to Login" : "Create an Account";
+    isLoginMode = !isLoginMode;
+    document.getElementById('auth-title').innerText = isLoginMode ? "Secure Login" : "Create Account";
+    document.getElementById('primary-auth-btn').innerText = isLoginMode ? "Login" : "Register";
+    document.getElementById('toggle-auth-btn').innerText = isLoginMode ? "Create an Account" : "Back to Login";
     document.getElementById('error-msg').innerText = "";
 }
 
 async function submitAuth() {
     const usernameInput = document.getElementById('username').value.trim();
     const passwordInput = document.getElementById('password').value.trim();
-    const errorText = document.getElementById('error-msg');
+    const errorMsg = document.getElementById('error-msg');
 
-    if(!usernameInput || !passwordInput) {
-        errorText.innerText = "Please complete all fields.";
+    if (!usernameInput || !passwordInput) {
+        errorMsg.innerText = "Please fill in all fields.";
         return;
     }
 
-    const endpoint = isRegisterMode ? '/register' : '/login';
-
+    const endpoint = isLoginMode ? '/login' : '/register';
+    
     try {
         const response = await fetch(endpoint, {
             method: 'POST',
@@ -67,315 +60,433 @@ async function submitAuth() {
         const data = await response.json();
 
         if (data.success) {
-            if (isRegisterMode) {
-                isRegisterMode = false;
-                toggleAuthMode();
-                errorText.style.color = "#04d361";
-                errorText.innerText = "Account created! Please log in.";
-            } else {
+            if (isLoginMode) {
                 currentUser = data.username;
-                sessionStorage.setItem('chat_username', currentUser);
+                document.getElementById('welcome-bar').innerText = `Logged in as: ${currentUser}`;
                 document.getElementById('auth-screen').classList.add('hidden');
                 document.getElementById('app-screen').classList.remove('hidden');
-                document.getElementById('welcome-bar').innerText = `Logged in as: ${currentUser}`;
-                initSocket();
-            }
-        } else {
-            errorText.style.color = "#f75a68";
-            errorText.innerText = data.message;
-        }
-    } catch(err) {
-        errorText.innerText = "Connection error.";
-    }
-}
-
-function initSocket() {
-    socket = io(window.location.origin, { transports: ['websocket', 'polling'] });
-    socket.emit('register_active_user', currentUser);
-
-    function displayMessage(data) {
-        const chatBox = document.getElementById('chat-box');
-        try {
-            const bytes = CryptoJS.AES.decrypt(data.text, SHARED_SECRET_KEY);
-            const decryptedText = bytes.toString(CryptoJS.enc.Utf8);
-            if (decryptedText) {
-                const msgElement = document.createElement('div');
-                const isSentByMe = data.user === currentUser;
-
-                msgElement.className = `message-bubble ${isSentByMe ? 'sent' : 'received'}`;
                 
-                const formattedText = decryptedText.replace(/\n/g, '<br>');
-                msgElement.innerHTML = `
-                    <div class="message-author">${data.user}</div>
-                    <div class="message-text">${formattedText}</div>
-                `;
-
-                chatBox.appendChild(msgElement);
-                chatBox.scrollTop = chatBox.scrollHeight;
+                socket.emit('register_active_user', currentUser);
+            } else {
+                alert("Account created successfully! Please log in.");
+                toggleAuthMode();
             }
-        } catch (e) { console.error("Decryption error", e); }
-    }
-
-    socket.on('update_user_directory', (userList) => {
-        const listDiv = document.getElementById('users-list');
-        listDiv.innerHTML = "";
-
-        userList.forEach(account => {
-            if (account.username === currentUser) return;
-
-            const card = document.createElement('div');
-            const isActive = account.username === currentTarget;
-            card.className = `user-card ${isActive ? 'active-target' : ''}`;
-            
-            const dotClass = account.isOnline ? 'dot-online' : 'dot-offline';
-            const statusText = account.isOnline ? 'Online' : 'Offline';
-
-            card.innerHTML = `
-                <div>
-                    <span class="dot ${dotClass}"></span>
-                    <span>${account.username}</span>
-                </div>
-                <span style="font-size: 11px; opacity:0.7;">${statusText}</span>
-            `;
-
-            card.onclick = () => selectTargetUser(account.username);
-            listDiv.appendChild(card);
-        });
-    });
-
-    socket.on('load_history', (history) => {
-        const chatBox = document.getElementById('chat-box');
-        if (chatBox) {
-            chatBox.innerHTML = ""; 
-            history.forEach(msg => displayMessage(msg));
-        }
-    });
-
-    socket.on('chat_message', (data) => {
-        const expectedRoom = [currentUser, currentTarget].sort().join('-');
-        if (data.room === expectedRoom) {
-            displayMessage(data);
-        }
-    });
-
-    socket.on('incoming_call', async ({ from, offer }) => {
-        if (peerConnection) {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            socket.emit('answer_call', { to: from, answer });
         } else {
-            incomingOffer = { from, offer };
-            document.getElementById('call-banner').classList.remove('hidden');
-            document.getElementById('call-status-text').innerText = `Incoming Call from ${from}...`;
-            document.getElementById('accept-call-btn').classList.remove('hidden');
+            errorMsg.innerText = data.message || "Authentication failed.";
         }
-    });
-
-    socket.on('call_answered', async ({ answer }) => {
-        if (peerConnection) {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-            document.getElementById('call-status-text').innerText = `Call Connected`;
-        }
-    });
-
-    socket.on('ice_candidate', async ({ candidate }) => {
-        if (peerConnection && candidate) {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        }
-    });
-
-    socket.on('call_ended', () => {
-        cleanupCall();
-    });
-}
-
-function showMobileTab(tab) {
-    const sidebar = document.getElementById('sidebar');
-    const mainChat = document.getElementById('main-chat');
-    
-    if (tab === 'contacts') {
-        sidebar.classList.remove('mobile-hidden');
-        mainChat.classList.add('mobile-hidden');
-    } else {
-        sidebar.classList.add('mobile-hidden');
-        mainChat.classList.remove('mobile-hidden');
+    } catch (err) {
+        errorMsg.innerText = "Server error. Try again later.";
     }
 }
 
-function selectTargetUser(targetUsername) {
+function logout() {
+    location.reload();
+}
+
+/* ==========================================================================
+   NAVIGATION & DIRECTORY
+   ========================================================================== */
+
+socket.on('update_user_directory', (directory) => {
+    const usersList = document.getElementById('users-list');
+    usersList.innerHTML = "";
+
+    directory.forEach(u => {
+        if (u.username === currentUser) return; // Skip self
+
+        const card = document.createElement('div');
+        card.className = `user-card ${currentTarget === u.username && !isGroupChat ? 'active-target' : ''}`;
+        card.onclick = () => selectUser(u.username);
+
+        const statusDot = `<span class="dot ${u.isOnline ? 'dot-online' : 'dot-offline'}"></span>`;
+        card.innerHTML = `<div>${statusDot}<strong>${u.username}</strong></div>`;
+        usersList.appendChild(card);
+    });
+});
+
+function selectGroupChat() {
+    isGroupChat = true;
+    currentTarget = "";
+    
+    document.getElementById('chat-header').innerText = "🌐 Global Group Chat";
+    document.getElementById('message-input').disabled = false;
+    document.getElementById('send-btn').disabled = false;
+
+    // Toggle header button visibility for group view
+    document.getElementById('start-call-btn').classList.add('hidden');
+    document.getElementById('screen-share-btn').classList.add('hidden');
+
+    document.querySelectorAll('.user-card').forEach(c => c.classList.remove('active-target'));
+    document.getElementById('group-room-card').classList.add('active-target');
+
+    socket.emit('get_group_history');
+}
+
+function selectUser(targetUsername) {
+    isGroupChat = false; // RESET group chat state!
     currentTarget = targetUsername;
     
     document.getElementById('chat-header').innerText = `Chatting with: ${currentTarget}`;
     document.getElementById('message-input').disabled = false;
     document.getElementById('send-btn').disabled = false;
-    document.getElementById('start-call-btn').classList.remove('hidden');
-    document.getElementById('mute-btn').classList.remove('hidden');
-    document.getElementById('screen-share-btn').classList.remove('hidden');
 
-    if (window.innerWidth <= 768) {
-        showMobileTab('chat');
+    // Toggle header buttons for 1-on-1 view
+    if (currentTarget !== "Gemini AI") {
+        document.getElementById('start-call-btn').classList.remove('hidden');
+    } else {
+        document.getElementById('start-call-btn').classList.add('hidden');
     }
 
-    if (socket) {
-        socket.emit('get_private_history', currentTarget);
-    }
+    document.querySelectorAll('.user-card').forEach(c => c.classList.remove('active-target'));
+    document.getElementById('group-room-card').classList.remove('active-target');
+    
+    // Highlight selected contact card
+    const cards = document.querySelectorAll('#users-list .user-card');
+    cards.forEach(card => {
+        if (card.innerText.includes(targetUsername)) {
+            card.classList.add('active-target');
+        }
+    });
+
+    socket.emit('get_private_history', currentTarget);
 }
+
+/* ==========================================================================
+   MESSAGING & DECRYPTION
+   ========================================================================== */
 
 function sendPrivateMsg() {
     const msgInput = document.getElementById('message-input');
     const text = msgInput.value.trim();
+    if (!text || !socket) return;
 
-    if (!currentTarget) return;
+    const encryptedText = CryptoJS.AES.encrypt(text, SHARED_SECRET_KEY).toString();
 
-    if (text && socket) {
-        const encryptedText = CryptoJS.AES.encrypt(text, SHARED_SECRET_KEY).toString();
+    if (isGroupChat) {
+        socket.emit('group_message', { text: encryptedText });
+    } else if (currentTarget) {
         socket.emit('private_message', { to: currentTarget, text: encryptedText });
-        msgInput.value = "";
+    }
+    msgInput.value = "";
+}
+
+// Support Enter key to send message
+document.getElementById('message-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendPrivateMsg();
+    }
+});
+
+socket.on('load_history', (history) => {
+    const chatBox = document.getElementById('chat-box');
+    chatBox.innerHTML = "";
+    history.forEach(msg => displayMessage(msg));
+});
+
+socket.on('load_group_history', (history) => {
+    if (isGroupChat) {
+        const chatBox = document.getElementById('chat-box');
+        chatBox.innerHTML = "";
+        history.forEach(msg => displayMessage(msg));
+    }
+});
+
+socket.on('chat_message', (data) => {
+    if (!isGroupChat) {
+        displayMessage(data);
+    }
+});
+
+socket.on('group_message', (data) => {
+    if (isGroupChat) {
+        displayMessage(data);
+    }
+});
+
+function displayMessage(msgData) {
+    const chatBox = document.getElementById('chat-box');
+    if (!chatBox) return;
+
+    let decryptedText = "";
+    try {
+        const bytes = CryptoJS.AES.decrypt(msgData.text, SHARED_SECRET_KEY);
+        decryptedText = bytes.toString(CryptoJS.enc.Utf8);
+    } catch (e) {
+        decryptedText = "[Decryption Error]";
+    }
+
+    const isSelf = msgData.user === currentUser;
+    const bubble = document.createElement('div');
+    bubble.className = `message-bubble ${isSelf ? 'sent' : 'received'}`;
+    
+    bubble.innerHTML = `
+        <div class="message-author">${msgData.user}</div>
+        <div>${decryptedText}</div>
+    `;
+
+    chatBox.appendChild(bubble);
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+/* ==========================================================================
+   GROUP VOICE CALL (MESH WEBRTC)
+   ========================================================================== */
+
+async function toggleGroupCall() {
+    const btn = document.getElementById('group-call-btn');
+    if (!inGroupCall) {
+        try {
+            groupLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            inGroupCall = true;
+            btn.innerText = "❌ Leave Group Voice";
+            btn.classList.replace('call-btn', 'end-btn');
+            
+            socket.emit('join_group_call');
+        } catch (err) {
+            alert("Microphone access is required to join group voice.");
+        }
+    } else {
+        leaveGroupCall();
+    }
+}
+
+socket.on('all_call_users', (users) => {
+    users.forEach(u => {
+        createGroupPeer(u.socketId, true);
+    });
+});
+
+socket.on('user_joined_call', ({ socketId }) => {
+    createGroupPeer(socketId, false);
+});
+
+socket.on('mesh_signal', async ({ fromSocketId, signal }) => {
+    let pc = groupPeers[fromSocketId];
+    if (!pc) pc = createGroupPeer(fromSocketId, false);
+
+    if (signal.sdp) {
+        await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+        if (signal.sdp.type === 'offer') {
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit('send_mesh_signal', { toSocketId: fromSocketId, signal: { sdp: pc.localDescription } });
+        }
+    } else if (signal.candidate) {
+        await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+    }
+});
+
+socket.on('user_left_call', ({ socketId }) => {
+    if (groupPeers[socketId]) {
+        groupPeers[socketId].close();
+        delete groupPeers[socketId];
+    }
+    // Clean up DOM element
+    const audioEl = document.getElementById(`audio-${socketId}`);
+    if (audioEl) audioEl.remove();
+});
+
+function createGroupPeer(targetSocketId, isInitiator) {
+    const pc = new RTCPeerConnection(rtcConfig);
+    groupPeers[targetSocketId] = pc;
+
+    if (groupLocalStream) {
+        groupLocalStream.getTracks().forEach(track => pc.addTrack(track, groupLocalStream));
+    }
+
+    pc.onicecandidate = (event) => {
+        if (event.candidate) {
+            socket.emit('send_mesh_signal', { toSocketId: targetSocketId, signal: { candidate: event.candidate } });
+        }
+    };
+
+    pc.ontrack = (event) => {
+        let audioEl = document.getElementById(`audio-${targetSocketId}`);
+        if (!audioEl) {
+            audioEl = document.createElement('audio');
+            audioEl.id = `audio-${targetSocketId}`;
+            audioEl.autoplay = true;
+            document.body.appendChild(audioEl);
+        }
+        audioEl.srcObject = event.streams[0];
+    };
+
+    if (isInitiator) {
+        pc.createOffer().then(offer => {
+            pc.setLocalDescription(offer);
+            socket.emit('send_mesh_signal', { toSocketId: targetSocketId, signal: { sdp: offer } });
+        });
+    }
+
+    return pc;
+}
+
+function leaveGroupCall() {
+    inGroupCall = false;
+    const btn = document.getElementById('group-call-btn');
+    btn.innerText = "🔊 Join Group Voice";
+    btn.classList.replace('end-btn', 'call-btn');
+
+    socket.emit('leave_group_call');
+
+    Object.keys(groupPeers).forEach(id => {
+        groupPeers[id].close();
+        const audioEl = document.getElementById(`audio-${id}`);
+        if (audioEl) audioEl.remove();
+    });
+    groupPeers = {};
+
+    if (groupLocalStream) {
+        groupLocalStream.getTracks().forEach(t => t.stop());
+        groupLocalStream = null;
     }
 }
 
 /* ==========================================================================
-   VOICE, MUTE, & SCREEN SHARE LOGIC
+   1-ON-1 CALLS & SCREEN SHARING
    ========================================================================== */
-
-function toggleMute() {
-    if (!localStream) {
-        alert("You must be in an active call to mute your microphone!");
-        return;
-    }
-
-    const audioTrack = localStream.getAudioTracks()[0];
-    if (audioTrack) {
-        isMuted = !isMuted;
-        audioTrack.enabled = !isMuted;
-        
-        const muteBtn = document.getElementById('mute-btn');
-        muteBtn.innerText = isMuted ? "🔇 Unmute" : "🎙️ Mute";
-        muteBtn.style.background = isMuted ? "#f75a68" : "#29292e";
-    }
-}
 
 async function startCall() {
     if (!currentTarget) return;
-    setupPeerConnection();
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    
+    peerConnection = create1on1PeerConnection();
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
 
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-
-        socket.emit('call_user', { to: currentTarget, offer });
-        document.getElementById('call-banner').classList.remove('hidden');
-        document.getElementById('call-status-text').innerText = `Calling ${currentTarget}...`;
-        document.getElementById('accept-call-btn').classList.add('hidden');
-    } catch (err) {
-        console.error("Microphone access error:", err);
-        alert("Unable to access microphone. Make sure permissions are granted and you are on HTTPS/localhost.");
-    }
+    socket.emit('call_user', { to: currentTarget, offer });
+    
+    document.getElementById('call-banner').classList.remove('hidden');
+    document.getElementById('call-status-text').innerText = `Calling ${currentTarget}...`;
+    document.getElementById('mute-btn').classList.remove('hidden');
+    document.getElementById('screen-share-btn').classList.remove('hidden');
 }
+
+socket.on('incoming_call', async ({ from, offer }) => {
+    currentTarget = from;
+    document.getElementById('call-banner').classList.remove('hidden');
+    document.getElementById('call-status-text').innerText = `Incoming call from ${from}`;
+    document.getElementById('accept-call-btn').classList.remove('hidden');
+    
+    window.pendingOffer = offer;
+});
 
 async function acceptCall() {
-    if (!incomingOffer) return;
-    currentTarget = incomingOffer.from;
-    setupPeerConnection();
+    document.getElementById('accept-call-btn').classList.add('hidden');
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    peerConnection = create1on1PeerConnection();
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingOffer.offer));
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(window.pendingOffer));
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
 
-        socket.emit('answer_call', { to: currentTarget, answer });
-        document.getElementById('call-status-text').innerText = `In Call with ${currentTarget}`;
-        document.getElementById('accept-call-btn').classList.add('hidden');
-    } catch (err) {
-        console.error("Microphone access error:", err);
-        alert("Unable to access microphone.");
-    }
+    socket.emit('answer_call', { to: currentTarget, answer });
+    
+    document.getElementById('mute-btn').classList.remove('hidden');
+    document.getElementById('screen-share-btn').classList.remove('hidden');
 }
 
-function setupPeerConnection() {
-    peerConnection = new RTCPeerConnection(rtcConfig);
+socket.on('call_answered', async ({ answer }) => {
+    document.getElementById('call-status-text').innerText = `In call with ${currentTarget}`;
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+});
 
-    peerConnection.onicecandidate = (event) => {
+socket.on('ice_candidate', async ({ candidate }) => {
+    if (peerConnection) {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    }
+});
+
+socket.on('call_ended', () => {
+    endCall(false);
+});
+
+function endCall(notifyPeer = true) {
+    if (notifyPeer && currentTarget) {
+        socket.emit('end_call', { to: currentTarget });
+    }
+
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
+
+    if (localStream) {
+        localStream.getTracks().forEach(t => t.stop());
+        localStream = null;
+    }
+
+    if (screenStream) {
+        screenStream.getTracks().forEach(t => t.stop());
+        screenStream = null;
+    }
+
+    document.getElementById('call-banner').classList.add('hidden');
+    document.getElementById('video-container').classList.add('hidden');
+    document.getElementById('mute-btn').classList.add('hidden');
+    document.getElementById('screen-share-btn').classList.add('hidden');
+}
+
+function create1on1PeerConnection() {
+    const pc = new RTCPeerConnection(rtcConfig);
+
+    pc.onicecandidate = (event) => {
         if (event.candidate) {
             socket.emit('ice_candidate', { to: currentTarget, candidate: event.candidate });
         }
     };
 
-    peerConnection.ontrack = (event) => {
-        const stream = event.streams[0]; 
-
-        if (event.track.kind === 'audio') {
-            const remoteAudio = document.getElementById('remote-audio');
-            if (remoteAudio) {
-                remoteAudio.srcObject = stream;
-            }
-        } else if (event.track.kind === 'video') {
-            const remoteVideo = document.getElementById('remote-video');
-            const videoContainer = document.getElementById('video-container');
-            
-            if (remoteVideo) {
-                remoteVideo.srcObject = stream;
-                if (videoContainer) videoContainer.classList.remove('hidden');
-                remoteVideo.play().catch(e => console.error("Playback error:", e));
-            }
+    pc.ontrack = (event) => {
+        if (event.track.kind === 'video') {
+            const videoEl = document.getElementById('remote-video');
+            videoEl.srcObject = event.streams[0];
+            document.getElementById('video-container').classList.remove('hidden');
+        } else if (event.track.kind === 'audio') {
+            const audioEl = document.getElementById('remote-audio');
+            audioEl.srcObject = event.streams[0];
         }
     };
+
+    return pc;
+}
+
+function toggleMute() {
+    if (!localStream && !groupLocalStream) return;
+    isMuted = !isMuted;
+    
+    const stream = localStream || groupLocalStream;
+    stream.getAudioTracks()[0].enabled = !isMuted;
+    
+    const muteBtn = document.getElementById('mute-btn');
+    muteBtn.innerText = isMuted ? "🔇 Unmute" : "🎙️ Mute";
 }
 
 async function toggleScreenShare() {
-    if (!peerConnection) {
-        alert("You must be in an active call to share your screen!");
-        return;
-    }
+    if (!peerConnection) return;
 
     if (!isScreenSharing) {
         try {
-            // Request High Resolution Screen Sharing
             screenStream = await navigator.mediaDevices.getDisplayMedia({
-                video: {
-                    width: { ideal: 1920, max: 3840 },
-                    height: { ideal: 1080, max: 2160 },
-                    frameRate: { ideal: 30, max: 60 }
-                },
+                video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
                 audio: true
             });
 
             const screenTrack = screenStream.getVideoTracks()[0];
-
             peerConnection.addTrack(screenTrack, screenStream);
 
-            const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
-            if (sender && sender.setParameters) {
-                const parameters = sender.getParameters();
-                if (!parameters.encodings) {
-                    parameters.encodings = [{}];
-                }
-                // Set max bitrate to 3 Mbps (3,000,000 bits/sec) for crisp HD quality
-                parameters.encodings[0].maxBitrate = 3000000; 
-                sender.setParameters(parameters).catch(e => console.error(e));
-            }
-
-            // Renegotiate with peer so the receiver gets notified of the new stream
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
             socket.emit('call_user', { to: currentTarget, offer });
 
-            screenTrack.onended = () => {
-                stopScreenShare();
-            };
-
-            document.getElementById('screen-share-btn').innerText = "🛑 Stop Sharing";
             isScreenSharing = true;
-
-        } catch (err) {
-            console.error("Screen share error:", err);
+            document.getElementById('screen-share-btn').innerText = "🛑 Stop Share";
+        } catch (e) {
+            console.error("Screen share error:", e);
         }
     } else {
         stopScreenShare();
@@ -384,59 +495,18 @@ async function toggleScreenShare() {
 
 function stopScreenShare() {
     if (screenStream) {
-        screenStream.getTracks().forEach(track => track.stop());
+        screenStream.getTracks().forEach(t => t.stop());
         screenStream = null;
     }
-
-    const sender = peerConnection ? peerConnection.getSenders().find(s => s.track && s.track.kind === 'video') : null;
-    if (sender) {
-        peerConnection.removeTrack(sender);
-    }
-
-    document.getElementById('screen-share-btn').innerText = "🖥️ Share Screen";
     isScreenSharing = false;
-}
-
-function endCall() {
-    if (currentTarget) {
-        socket.emit('end_call', { to: currentTarget });
-    }
-    cleanupCall();
-}
-
-function cleanupCall() {
-    stopScreenShare();
-    if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
-    }
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-    }
-
-    const videoContainer = document.getElementById('video-container');
-    if (videoContainer) videoContainer.classList.add('hidden');
-    
-    document.getElementById('call-banner').classList.add('hidden');
+    document.getElementById('screen-share-btn').innerText = "🖥️ Share Screen";
 }
 
 function toggleFullscreen() {
-    const videoContainer = document.getElementById('video-container');
-    const videoElement = document.getElementById('remote-video');
-
-    const target = videoContainer || videoElement;
-
-    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-        if (target.requestFullscreen) {
-            target.requestFullscreen();
-        } else if (target.webkitRequestFullscreen) {
-            target.webkitRequestFullscreen();
-        }
+    const container = document.getElementById('video-container');
+    if (!document.fullscreenElement) {
+        container.requestFullscreen().catch(err => console.error(err));
     } else {
-        if (document.exitFullscreen) {
-            document.exitFullscreen();
-        } else if (document.webkitExitFullscreen) {
-            document.webkitExitFullscreen();
-        }
+        document.exitFullscreen();
     }
 }

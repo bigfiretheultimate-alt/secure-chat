@@ -55,8 +55,8 @@
         }
         button:hover { background: #0056b3; }
         .alt-btn { background: #29292e; color: #a8a8b3; }
-        .call-btn { background: #04d361; }
-        .end-btn { background: #f75a68; }
+        .call-btn { background: #04d361; color: white; }
+        .end-btn { background: #f75a68; color: white; }
 
         .flex-layout { display: flex; flex-grow: 1; gap: 20px; height: calc(100% - 60px); }
         
@@ -158,16 +158,16 @@
             margin-bottom: 3px;
             opacity: 0.8;
         }
+
         /* Ensure video expands to fill full screen when container enters fullscreen mode */
         #video-container:fullscreen #remote-video,
         #video-container:-webkit-full-screen #remote-video {
             width: 100% !important;
             height: 100% !important;
             max-height: 100vh !important;
-            object-fit: contain; /* Keeps original video aspect ratio without stretching */
+            object-fit: contain;
         }
 
-        /* Ensure the container background stays black in full screen */
         #video-container:fullscreen,
         #video-container:-webkit-full-screen {
             background-color: #000000;
@@ -210,14 +210,20 @@
 
         <div class="flex-layout">
             <div id="sidebar" class="sidebar">
-                <h4 style="margin-top:0;">Contacts</h4>
+                <h4 style="margin-top:0;">Channels</h4>
+                <div class="user-card" id="group-room-card" onclick="selectGroupChat()">
+                    <div><strong>🌐 Global Group Room</strong></div>
+                </div>
+                
+                <h4 style="margin-top:15px;">Direct Messages</h4>
                 <div id="users-list"></div>
             </div>
             
             <div id="main-chat" class="main-chat">
                 <div class="chat-header-bar">
-                    <span id="chat-header">Select a contact</span>
+                    <span id="chat-header">Select a channel or contact</span>
                     <div style="display: flex; gap: 5px;">
+                        <button id="group-call-btn" class="call-btn" style="width:auto; padding: 6px 12px;" onclick="toggleGroupCall()">🔊 Join Group Voice</button>
                         <button id="start-call-btn" class="call-btn hidden" style="width:auto; padding: 6px 12px;" onclick="startCall()">📞 Call</button>
                         <button id="mute-btn" class="alt-btn hidden" style="width:auto; padding: 6px 12px;" onclick="toggleMute()">🎙️ Mute</button>
                         <button id="screen-share-btn" class="call-btn hidden" style="width:auto; padding: 6px 12px; background: #9146FF;" onclick="toggleScreenShare()">🖥️ Share Screen</button>
@@ -235,7 +241,7 @@
                 <div id="chat-box"></div>
 
                 <div class="input-row">
-                    <textarea id="message-input" placeholder="Type private message... (Press Enter to send, Shift+Enter for new line)" disabled></textarea>
+                    <textarea id="message-input" placeholder="Type message... (Press Enter to send, Shift+Enter for new line)" disabled></textarea>
                     <button id="send-btn" onclick="sendPrivateMsg()" disabled>Send</button>
                 </div>
             </div>
