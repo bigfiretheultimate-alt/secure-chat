@@ -3,22 +3,17 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const mongoose = require('mongoose');
-const { GoogleGenAI } = require('@google/genai');
+const genai = require('@google/genai');
 const CryptoJS = require('crypto-js');
-
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-
 const PORT = process.env.PORT || 3000;
-
-// 1. Connection strings (replace with your actual password and key)
-const MONGO_URI = "mongodb+srv://admin:firewaterchat@cluster0.zbclxvl.mongodb.net/?appName=Cluster0";
-const GEMINI_API_KEY = "AIzaSyAQ.Ab8RN6LEYwnWi959nnnUhfX_lcDUDViFbRtyiLH6-KfSBcyJzA";
-
-// 2. Initialize Gemini
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-
+const MONGO_URI = process.env.MONGO_URI;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// Safe initialization for CommonJS require
+const GoogleGenAIClass = genai.GoogleGenAI || genai;
+const ai = new GoogleGenAIClass({ apiKey: GEMINI_API_KEY });
 // Connect to MongoDB Database
 mongoose.connect(MONGO_URI)
     .then(() => console.log('Connected to MongoDB Atlas successfully!'))
@@ -90,6 +85,7 @@ async function broadcastUserDirectory() {
             username: u.username,
             isOnline: Boolean(ACTIVE_USERS[u.username])
         }));
+        directory.unshift({ username: "Gemini AI", isOnline: true });
         io.emit('update_user_directory', directory);
     } catch (err) {
         console.error("Error broadcasting user directory:", err);
